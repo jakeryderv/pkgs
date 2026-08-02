@@ -11,7 +11,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="$ROOT/dist"
 REPO="$ROOT/repo"
-SIGNER="${SIGNER:-contact@jvs.sh}"
+SIGNER="${SIGNER:-pkgs@jvs.sh}"
 ARCHES="${ARCHES:-amd64 arm64}"
 SUITE=stable
 COMPONENT=main

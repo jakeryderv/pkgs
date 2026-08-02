@@ -80,7 +80,7 @@ jobs:
       - name: Build and sign
         env:
           GNUPGHOME: ${{ github.workspace }}/gnupg
-          SIGNER: ${{ vars.SIGNER_UID || 'contact@jvs.sh' }}
+          SIGNER: ${{ vars.SIGNER_UID || 'pkgs@jvs.sh' }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           ./scripts/build-deb.sh

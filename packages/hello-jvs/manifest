@@ -3,7 +3,7 @@ Version: 0.1.0
 Section: utils
 Priority: optional
 Architecture: all
-Maintainer: Jake Van Slyke <contact@jvs.sh>
+Maintainer: Jake Van Slyke <pkgs@jvs.sh>
 Description: Smoke-test package for the jvs.sh apt repository
  Prints a greeting and exits. Its only job is to prove the repository,
  signing, and install path work end to end. Safe to remove.
