@@ -52,11 +52,6 @@ jobs:
       - name: Lint install.sh
         run: sh -n scripts/install.sh
 
-      - name: Confirm pins were not committed stale
-        run: |
-          git diff --exit-code scripts/install.sh \
-            || echo "::notice::install.sh pins differ from the ephemeral CI key, which is expected"
-
   publish:
     needs: verify
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

@@ -59,8 +59,35 @@ a `.deb` came from.
 ./scripts/publish.sh       # repo/ -> R2
 ```
 
-`build-repo.sh` refuses to run if the key pins in `scripts/install.sh` do not
-match the signing key. Pass `UPDATE_PINS=1` when a key change is intentional.
+Two guards will stop you, both deliberately:
+
+- `build-repo.sh` refuses to run if the key pins in `scripts/install.sh` do
+  not match the signing key. Pass `UPDATE_PINS=1` when a key change is
+  intentional.
+- `publish.sh` refuses to upload a `pool/` object whose content differs from
+  what is already in the bucket. See below.
+
+## Versioning: same version means same bytes
+
+A `pool/` path is cached at the edge for a year. Republishing a different
+build under the same filename means apt fetches the stale `.deb`, its hash
+disagrees with `Packages`, and the install fails — for a year, on every
+machine. This is not hypothetical; it happened, and `publish.sh`'s guard
+exists because of it.
+
+So: **any content change requires a version bump.** New version, new
+filename, new URL, no stale cache.
+
+The counterpart is that builds are reproducible. `dpkg-deb` embeds mtimes,
+so `build-deb.sh` anchors `SOURCE_DATE_EPOCH` and the staged tree's mtimes
+to the last commit touching each package. Rebuilding an unchanged package
+therefore produces byte-identical output, and CI can republish without the
+guard tripping on noise. Bytes change when the package changes, and not
+otherwise.
+
+One consequence worth knowing: "rebuild and republish without changing
+anything" is a no-op, not an error — but it is also not a way to fix a bad
+build. Bump the version.
 
 ## Why install.sh pins the key
 
@@ -85,11 +112,20 @@ Both are scoped `http.host eq "pkgs.jvs.sh"` and do not affect `jvs.sh`.
 
 `verify` runs on every push and PR: builds with a throwaway key and installs
 in real Debian and Ubuntu containers, including a negative test proving apt
-rejects the wrong key. Needs no secrets.
+rejects the wrong key. Needs no secrets, so it runs on PRs from anywhere.
 
 `publish` runs on `main` only and requires `GPG_PRIVATE_KEY`,
-`CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID`. It fails rather than
-publishing an unsigned repository if the key is missing.
+`GPG_PASSPHRASE`, `CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID`. It
+fails rather than publishing an unsigned repository if the key is missing.
+
+`GPG_PASSPHRASE` is not optional: a runner has no gpg-agent and no tty, so
+nothing can prompt for it. `build-repo.sh` feeds it through loopback
+pinentry when set.
+
+The Cloudflare token here should be scoped to **Workers R2 Storage → Edit
+and nothing else** — CI only uploads objects. It never needs zone access.
+
+To publish: edit `packages/`, bump the version, push to `main`.
 
 ## Testing without touching production
 
