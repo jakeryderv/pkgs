@@ -67,7 +67,10 @@ find pool -type f -printf '%p\n' 2>/dev/null | sort | while read -r k; do put "$
 find dists -type f ! -name 'InRelease' ! -name 'Release.gpg' -printf '%p\n' | sort | while read -r k; do put "$k"; done
 # 3. signatures last — these are what apt validates everything else against
 for k in dists/stable/Release.gpg dists/stable/InRelease; do [ -f "$k" ] && put "$k"; done
-# 4. bootstrap files
-for k in jvs-archive-keyring.gpg install.sh; do [ -f "$k" ] && put "$k"; done
+# 4. bootstrap files. The .deb at this stable path is what install.sh fetches;
+#    it is a copy of the pool object at a version-independent URL.
+for k in jvs-archive-keyring.deb jvs-archive-keyring.gpg install.sh; do
+  [ -f "$k" ] && put "$k"
+done
 
 echo "published to r2://$BUCKET"

@@ -98,3 +98,18 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           WRANGLER: npx --yes wrangler@4
         run: ./scripts/publish.sh
+
+      # Publishing successfully is not the same as being installable: a
+      # bootstrap file missing from the upload list leaves every other check
+      # green while new machines cannot install at all.
+      - name: Verify the published repo installs
+        run: |
+          docker run --rm debian:stable bash -c '
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq curl ca-certificates >/dev/null
+            curl -fsSL https://pkgs.jvs.sh/install.sh | sh >/dev/null
+            apt-get install -y -qq hello-jvs >/dev/null
+            hello-jvs
+          '
