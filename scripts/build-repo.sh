@@ -71,31 +71,57 @@ fi
 "${gpg_sign[@]}" --clearsign -o "dists/$SUITE/InRelease" "dists/$SUITE/Release"
 "${gpg_sign[@]}" -abs       -o "dists/$SUITE/Release.gpg" "dists/$SUITE/Release"
 
-# ---- public keyring + install.sh ----------------------------------------
-gpg --export "$SIGNER" > "$REPO/jvs-archive-keyring.gpg"
-cp "$ROOT/scripts/install.sh" "$REPO/install.sh"
+# ---- rotation deadlock guard --------------------------------------------
+# Installed machines trust exactly the keys in the shipped keyring. Signing
+# with a key that is not in it means they cannot verify the repository -- and
+# therefore cannot fetch the keyring update that would teach them the new
+# key. That is unrecoverable without every user re-bootstrapping by hand, so
+# refuse rather than allow it.
+SHIPPED_KEYRING="$ROOT/packages/jvs-archive-keyring/files/usr/share/keyrings/jvs-archive-keyring.gpg"
+[ -f "$SHIPPED_KEYRING" ] || { echo "ERROR: no shipped keyring at $SHIPPED_KEYRING" >&2; exit 1; }
 
 FPR="$(gpg --with-colons --fingerprint "$SIGNER" | awk -F: '/^fpr:/{print $10; exit}')"
-SHA="$(sha256sum "$REPO/jvs-archive-keyring.gpg" | cut -d' ' -f1)"
+if ! gpg --show-keys --with-colons "$SHIPPED_KEYRING" \
+     | awk -F: '/^fpr:/{print $10}' | grep -qx "$FPR"; then
+  echo "ERROR: signing key $FPR is not in the shipped keyring." >&2
+  echo "Installed machines would be unable to verify this repository, and" >&2
+  echo "unable to fetch the update that would fix it." >&2
+  echo "Add it first:  ./scripts/update-keyring.sh <old-key> $SIGNER" >&2
+  echo "then bump packages/jvs-archive-keyring/manifest and publish that." >&2
+  exit 1
+fi
+
+# ---- bootstrap artifacts ------------------------------------------------
+# The published keyring is the committed one, not a fresh export of whatever
+# key is signing. During a rotation those differ, and the committed file is
+# the reviewed source of truth.
+cp "$SHIPPED_KEYRING" "$REPO/jvs-archive-keyring.gpg"
+
+# Stable, version-independent path so install.sh does not need to know the
+# current version. Not under pool/, so it is not edge-cached.
+keyring_deb="$(ls "$DIST"/jvs-archive-keyring_*_all.deb 2>/dev/null | head -1)"
+[ -n "$keyring_deb" ] || { echo "ERROR: no jvs-archive-keyring .deb in $DIST" >&2; exit 1; }
+cp "$keyring_deb" "$REPO/jvs-archive-keyring.deb"
+
+SHA="$(sha256sum "$REPO/jvs-archive-keyring.deb" | cut -d' ' -f1)"
 
 if [ "${UPDATE_PINS:-0}" = "1" ]; then
-  sed -i "s|^KEY_FINGERPRINT=.*|KEY_FINGERPRINT=\"$FPR\"|" "$ROOT/scripts/install.sh"
-  sed -i "s|^KEYRING_SHA256=.*|KEYRING_SHA256=\"$SHA\"|"   "$ROOT/scripts/install.sh"
-  cp "$ROOT/scripts/install.sh" "$REPO/install.sh"
-  echo "  pins updated in scripts/install.sh"
+  sed -i "s|^KEYRING_DEB_SHA256=.*|KEYRING_DEB_SHA256=\"$SHA\"|" "$ROOT/scripts/install.sh"
+  echo "  pin updated in scripts/install.sh"
 else
-  # install.sh pins the key it expects. If they drift, every new machine would
-  # silently trust whatever key the repo happens to serve — so fail loudly.
-  want_fpr="$(awk -F'"' '/^KEY_FINGERPRINT=/{print $2}' "$ROOT/scripts/install.sh")"
-  want_sha="$(awk -F'"' '/^KEYRING_SHA256=/{print $2}'  "$ROOT/scripts/install.sh")"
-  if [ "$want_fpr" != "$FPR" ] || [ "$want_sha" != "$SHA" ]; then
-    echo "ERROR: scripts/install.sh pins do not match the signing key." >&2
-    echo "  install.sh fingerprint: ${want_fpr:-<unset>}" >&2
-    echo "  signing key            : $FPR" >&2
-    echo "Re-run with UPDATE_PINS=1 if this key change is intentional." >&2
+  # install.sh pins the exact bootstrap artifact it expects. Without this a
+  # new machine would trust whatever the server happened to return.
+  want_sha="$(awk -F'"' '/^KEYRING_DEB_SHA256=/{print $2}' "$ROOT/scripts/install.sh")"
+  if [ "$want_sha" != "$SHA" ]; then
+    echo "ERROR: scripts/install.sh pin does not match the keyring package." >&2
+    echo "  install.sh : ${want_sha:-<unset>}" >&2
+    echo "  built      : $SHA" >&2
+    echo "Re-run with UPDATE_PINS=1 if this change is intentional." >&2
     exit 1
   fi
 fi
+cp "$ROOT/scripts/install.sh" "$REPO/install.sh"
 
 echo "repo built at $REPO"
 echo "  signed by : $FPR"
+echo "  trusts    : $(gpg --show-keys --with-colons "$SHIPPED_KEYRING" | grep -c '^pub:') key(s)"

@@ -1,15 +1,15 @@
 {
   "rules": [
     {
-      "description": "apt metadata: never cache. A stale Packages.gz served against a fresh InRelease produces a hash mismatch and apt exits 100.",
-      "expression": "(http.host eq \"pkgs.jvs.sh\" and starts_with(http.request.uri.path, \"/dists/\"))",
+      "description": "Everything except the package pool is either mutable or bootstrap material: apt metadata, install.sh, the keyring .deb at its stable path. A stale copy of any of them breaks clients, so none of it is cached. Written as a negation so anything added later is safe by default.",
+      "expression": "(http.host eq \"pkgs.jvs.sh\" and not starts_with(http.request.uri.path, \"/pool/\"))",
       "action": "set_cache_settings",
       "action_parameters": {
         "cache": false
       }
     },
     {
-      "description": "apt pool: version-addressed and immutable, cache aggressively at the edge.",
+      "description": "The pool is version-addressed and immutable by policy, enforced by the guard in publish.sh. Cache it hard.",
       "expression": "(http.host eq \"pkgs.jvs.sh\" and starts_with(http.request.uri.path, \"/pool/\"))",
       "action": "set_cache_settings",
       "action_parameters": {

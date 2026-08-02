@@ -53,10 +53,12 @@ a `.deb` came from.
 ## Building
 
 ```
-./scripts/build-deb.sh     # packages/ -> dist/
-./scripts/build-repo.sh    # dist/ -> repo/, signed
-./scripts/test-repo.sh     # verify in Debian + Ubuntu containers
-./scripts/publish.sh       # repo/ -> R2
+./scripts/build-deb.sh       # packages/ -> dist/
+./scripts/build-repo.sh      # dist/ -> repo/, signed
+./scripts/test-repo.sh       # verify in Debian + Ubuntu containers
+./scripts/test-rotation.sh   # verify a key rotation survives, in containers
+./scripts/publish.sh         # repo/ -> R2
+./scripts/update-keyring.sh  # regenerate the keyring the keyring package ships
 ```
 
 Two guards will stop you, both deliberately:
@@ -98,12 +100,57 @@ One consequence worth knowing: "rebuild and republish without changing
 anything" is a no-op, not an error — but it is also not a way to fix a bad
 build. Bump the version.
 
-## Why install.sh pins the key
+## Why install.sh pins the artifact
 
-`curl | sh` normally means trusting whatever key the server returns. This
-script pins the key's SHA-256 (and its fingerprint when `gpg` is available)
-and aborts on mismatch, so a substituted key fails closed instead of being
-silently trusted.
+`curl | sh` normally means trusting whatever the server returns. This script
+pins the SHA-256 of the keyring package and aborts on mismatch, so a
+substituted key fails closed instead of being silently trusted. The pin is
+rewritten by `build-repo.sh` and verified on every build, so it cannot drift.
+
+## The keyring package
+
+`jvs-archive-keyring` owns the signing key and the apt sources entry. That
+indirection is what makes the key replaceable: a new key reaches installed
+machines through `apt upgrade`, like any other update.
+
+Writing those files from a setup script instead would mean every machine
+pins one key forever, with no way to reach them — which is why the key has
+no expiry, and why that would otherwise be a problem rather than a choice.
+
+## Rotating the signing key
+
+Order matters, and getting it wrong is unrecoverable. Machines trust exactly
+the keys in the keyring they have. Signing with a key they do not yet trust
+means they cannot verify the repository, and therefore cannot fetch the
+keyring update that would teach them the new key.
+
+`build-repo.sh` refuses to sign with a key absent from the shipped keyring,
+so the deadlock cannot be reached by accident. The supported path:
+
+```
+# 1. ship a keyring trusting BOTH keys, still signed by the old one
+./scripts/update-keyring.sh old@jvs.sh new@jvs.sh
+$EDITOR packages/jvs-archive-keyring/manifest      # bump the version
+SIGNER=old@jvs.sh UPDATE_PINS=1 ./scripts/build-repo.sh
+./scripts/publish.sh
+
+# 2. wait. every machine must run apt upgrade before step 3.
+
+# 3. switch signing to the new key
+SIGNER=new@jvs.sh UPDATE_PINS=1 ./scripts/build-repo.sh
+./scripts/publish.sh
+
+# 4. later, once nothing needs the old key, drop it
+./scripts/update-keyring.sh new@jvs.sh
+```
+
+Step 2 is the load-bearing one and has no shortcut: a machine that has not
+upgraded its keyring before step 3 lands will start failing `apt update` and
+has to be fixed by re-running `install.sh` by hand.
+
+`./scripts/test-rotation.sh` runs this whole sequence against throwaway keys
+in a container, asserting the machine trusts 1 key, then 2, then survives the
+switch — without ever re-bootstrapping. It runs in CI.
 
 ## Cache rules
 

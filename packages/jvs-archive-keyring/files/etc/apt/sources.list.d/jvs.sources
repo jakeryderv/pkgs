@@ -1,0 +1,5 @@
+Types: deb
+URIs: https://pkgs.jvs.sh
+Suites: stable
+Components: main
+Signed-By: /usr/share/keyrings/jvs-archive-keyring.gpg

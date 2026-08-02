@@ -1,0 +1,14 @@
+Package: jvs-archive-keyring
+Version: 1.0.0
+Section: misc
+Priority: optional
+Architecture: all
+Maintainer: Jake Van Slyke <pkgs@jvs.sh>
+Description: GnuPG archive key and apt source for the jvs.sh repository
+ Ships the public key apt uses to verify packages from pkgs.jvs.sh, along
+ with the sources entry pointing at it.
+ .
+ Shipping these as a package rather than writing them from a setup script is
+ what makes key rotation possible: a new signing key reaches installed
+ machines through apt upgrade, like any other update. Removing this package
+ removes the repository configuration.

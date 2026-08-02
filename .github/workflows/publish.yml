@@ -47,6 +47,12 @@ jobs:
       - name: Verify install in Debian and Ubuntu
         run: ./scripts/test-repo.sh
 
+      # The rotation path cannot be checked by inspection: it only shows up
+      # when a machine installed under one key has to survive the switch to
+      # another using nothing but apt.
+      - name: Verify key rotation
+        run: ./scripts/test-rotation.sh
+
       # install.sh ships to users; a syntax error there is a broken bootstrap
       # for every new machine.
       - name: Lint install.sh
