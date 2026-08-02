@@ -79,11 +79,20 @@ So: **any content change requires a version bump.** New version, new
 filename, new URL, no stale cache.
 
 The counterpart is that builds are reproducible. `dpkg-deb` embeds mtimes,
-so `build-deb.sh` anchors `SOURCE_DATE_EPOCH` and the staged tree's mtimes
-to the last commit touching each package. Rebuilding an unchanged package
-therefore produces byte-identical output, and CI can republish without the
-guard tripping on noise. Bytes change when the package changes, and not
-otherwise.
+so `build-deb.sh` pins `SOURCE_DATE_EPOCH` and the staged tree's mtimes to a
+fixed constant. Rebuilding an unchanged package therefore produces
+byte-identical output, and CI can republish without the guard tripping on
+noise. Bytes change when the package changes, and not otherwise.
+
+The constant is deliberate. Deriving it from the last commit touching a
+package reads better but breaks under `actions/checkout`, which clones at
+depth 1: when HEAD does not touch the package, `git log -- packages/<name>`
+returns nothing and the epoch silently changes, so CI could only publish on
+commits that happened to modify the package. Build output must depend on
+package contents alone — not on repository history, checkout depth, or who
+built it.
+
+Override with `SOURCE_DATE_EPOCH` in the environment if you ever need to.
 
 One consequence worth knowing: "rebuild and republish without changing
 anything" is a no-op, not an error — but it is also not a way to fix a bad
