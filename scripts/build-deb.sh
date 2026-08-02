@@ -15,7 +15,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="$ROOT/dist"
 BUILD="$ROOT/build"
 
-rm -rf "$BUILD"; mkdir -p "$BUILD" "$DIST"
+# dist/ is a staging area for this build, not an archive. Letting it
+# accumulate means a stale .deb from an earlier version gets swept back into
+# the pool on the next publish. Published history lives in the bucket.
+rm -rf "$BUILD" "$DIST"; mkdir -p "$BUILD" "$DIST"
 
 shopt -s nullglob
 found=0

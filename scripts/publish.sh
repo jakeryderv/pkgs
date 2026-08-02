@@ -36,6 +36,31 @@ put() {
 }
 
 cd "$REPO"
+
+# Guard: a pool object is cached at the edge for a year on the promise that a
+# given filename's content never changes. Republishing the same version with
+# different content silently breaks every client until that cache expires --
+# apt fetches the stale .deb, its hash disagrees with Packages, and the
+# install fails. Debian's rule is the fix: new content means a new version.
+stale=0
+probe="$(mktemp)"
+while read -r k; do
+  # `if cmd; then` rather than a command substitution: under `set -e` a failed
+  # substitution aborts the script silently, and a missing object -- the
+  # normal case for anything new -- makes wrangler exit non-zero.
+  if $WRANGLER r2 object get "$BUCKET/$k" --file "$probe" --remote >/dev/null 2>&1; then
+    if [ "$(sha256sum "$probe" | cut -d' ' -f1)" != "$(sha256sum "$REPO/$k" | cut -d' ' -f1)" ]; then
+      echo "ERROR: $k already exists in the bucket with different content." >&2
+      stale=1
+    fi
+  fi
+done < <(find pool -type f -printf '%p\n' 2>/dev/null | sort)
+rm -f "$probe"
+if [ "$stale" -ne 0 ]; then
+  echo "Bump the package version instead of republishing the same one." >&2
+  exit 1
+fi
+
 # 1. payload first
 find pool -type f -printf '%p\n' 2>/dev/null | sort | while read -r k; do put "$k"; done
 # 2. then the indexes that reference it
