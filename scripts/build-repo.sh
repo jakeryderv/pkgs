@@ -60,10 +60,16 @@ apt-ftparchive \
 mv "$ROOT/.Release.tmp" "dists/$SUITE/Release"
 
 # ---- signatures ---------------------------------------------------------
-gpg --batch --yes --default-key "$SIGNER" --clearsign \
-    -o "dists/$SUITE/InRelease" "dists/$SUITE/Release"
-gpg --batch --yes --default-key "$SIGNER" -abs \
-    -o "dists/$SUITE/Release.gpg" "dists/$SUITE/Release"
+# A real signing key has a passphrase. Interactively gpg-agent supplies it;
+# in CI there is no agent and no tty, so GPG_PASSPHRASE is fed through
+# loopback pinentry instead. Without this, CI hangs or fails on the prompt.
+gpg_sign=(gpg --batch --yes --default-key "$SIGNER")
+if [ -n "${GPG_PASSPHRASE:-}" ]; then
+  gpg_sign+=(--pinentry-mode loopback --passphrase "$GPG_PASSPHRASE")
+fi
+
+"${gpg_sign[@]}" --clearsign -o "dists/$SUITE/InRelease" "dists/$SUITE/Release"
+"${gpg_sign[@]}" -abs       -o "dists/$SUITE/Release.gpg" "dists/$SUITE/Release"
 
 # ---- public keyring + install.sh ----------------------------------------
 gpg --export "$SIGNER" > "$REPO/jvs-archive-keyring.gpg"

@@ -9,6 +9,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO="$ROOT/repo"
 BUCKET="${BUCKET:-pkgs}"
+# Locally this is the globally installed wrangler. CI has no global install,
+# so the workflow sets WRANGLER="npx --yes wrangler@4".
+WRANGLER="${WRANGLER:-wrangler}"
 
 [ -d "$REPO" ] || { echo "ERROR: $REPO does not exist — run build-repo.sh first" >&2; exit 1; }
 
@@ -26,7 +29,7 @@ ctype() {
 
 put() {
   local key="$1"
-  wrangler r2 object put "$BUCKET/$key" --file "$REPO/$key" \
+  $WRANGLER r2 object put "$BUCKET/$key" --file "$REPO/$key" \
     --content-type "$(ctype "$key")" --remote >/dev/null 2>&1 \
     && printf '  put  %s\n' "$key" \
     || { printf '  FAIL %s\n' "$key" >&2; return 1; }
