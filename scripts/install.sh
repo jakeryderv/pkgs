@@ -15,7 +15,7 @@
 set -eu
 
 BASE_URL="${JVS_BASE_URL:-https://pkgs.jvs.sh}"
-KEYRING_DEB_SHA256="f3172019cf07f9a6841aa002193d49be62532b30af64ff60011e9409154cf391"
+KEYRING_DEB_SHA256="b6748f8f66431c6e804bd18142c81127dc2188ccbafee729b60926e69e0f2822"
 
 SOURCES=/etc/apt/sources.list.d/jvs.sources
 KEYRING=/usr/share/keyrings/jvs-archive-keyring.gpg

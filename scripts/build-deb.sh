@@ -43,11 +43,21 @@ for def in "$ROOT"/packages/*/; do
     done
   fi
 
-  # Anything landing in a bin directory must be executable regardless of the
-  # umask that checked it out.
-  for d in "$stage/usr/bin" "$stage/usr/local/bin" "$stage/bin"; do
-    [ -d "$d" ] && chmod 0755 "$d"/* || true
+  # Normalise permissions. `cp -a` preserves whatever the working tree has,
+  # which is the builder's umask -- 0664 here, 0644 from a git checkout in CI.
+  # That difference lands in the .deb and makes the same version produce
+  # different bytes depending on who built it.
+  find "$stage" -type d -exec chmod 0755 {} +
+  find "$stage" -type f -exec chmod 0644 {} +
+
+  # Then restore the things that must be executable: anything in a bin
+  # directory, and the maintainer scripts.
+  for d in usr/bin usr/local/bin bin usr/sbin sbin; do
+    [ -d "$stage/$d" ] && chmod 0755 "$stage/$d"/* || true
   done
+  if [ -d "$def/scripts" ]; then
+    for s in "$def"/scripts/*; do chmod 0755 "$stage/DEBIAN/$(basename "$s")"; done
+  fi
 
   # Reproducibility. dpkg-deb embeds mtimes, so a rebuild of an unchanged
   # package would otherwise produce different bytes -- which publish.sh
