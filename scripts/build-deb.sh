@@ -52,10 +52,13 @@ for def in "$ROOT"/packages/*/; do
   # Reproducibility. dpkg-deb embeds mtimes, so a rebuild of an unchanged
   # package would otherwise produce different bytes -- which publish.sh
   # rightly refuses, since a pool filename must always mean the same content.
-  # Anchoring to the last commit that touched this package means the bytes
-  # change when the package changes, and not otherwise.
-  epoch="$(git -C "$ROOT" log -1 --format=%ct -- "packages/$name" 2>/dev/null || true)"
-  [ -n "$epoch" ] || epoch=1700000000
+  #
+  # A fixed constant, deliberately. Deriving this from git history looks
+  # tidier but breaks under `actions/checkout`, which clones at depth 1: if
+  # HEAD does not touch this package, `git log -- packages/<name>` returns
+  # nothing and the epoch silently changes. Build output must depend on the
+  # package's contents and nothing else.
+  epoch="${SOURCE_DATE_EPOCH:-1700000000}"
   export SOURCE_DATE_EPOCH="$epoch"
   find "$stage" -exec touch -h -d "@$epoch" {} +
 
