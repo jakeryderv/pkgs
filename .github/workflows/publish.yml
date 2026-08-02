@@ -41,6 +41,11 @@ jobs:
           SIGNER: ci@example.invalid
           UPDATE_PINS: "1"   # ephemeral key, so pins are regenerated not enforced
         run: |
+          # The ephemeral key is not in the committed keyring, and build-repo.sh
+          # rightly refuses to sign with a key installed machines do not trust.
+          # Point the keyring at this key so the throwaway build is internally
+          # consistent -- the same move a real rotation makes, not a bypass.
+          ./scripts/update-keyring.sh ci@example.invalid
           ./scripts/build-deb.sh
           ./scripts/build-repo.sh
 
