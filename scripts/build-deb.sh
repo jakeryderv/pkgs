@@ -49,6 +49,16 @@ for def in "$ROOT"/packages/*/; do
     [ -d "$d" ] && chmod 0755 "$d"/* || true
   done
 
+  # Reproducibility. dpkg-deb embeds mtimes, so a rebuild of an unchanged
+  # package would otherwise produce different bytes -- which publish.sh
+  # rightly refuses, since a pool filename must always mean the same content.
+  # Anchoring to the last commit that touched this package means the bytes
+  # change when the package changes, and not otherwise.
+  epoch="$(git -C "$ROOT" log -1 --format=%ct -- "packages/$name" 2>/dev/null || true)"
+  [ -n "$epoch" ] || epoch=1700000000
+  export SOURCE_DATE_EPOCH="$epoch"
+  find "$stage" -exec touch -h -d "@$epoch" {} +
+
   # --root-owner-group so files install as root:root rather than inheriting
   # the uid of whoever ran the build.
   dpkg-deb --root-owner-group --build "$stage" "$DIST/${name}_${version}_${arch}.deb" >/dev/null
