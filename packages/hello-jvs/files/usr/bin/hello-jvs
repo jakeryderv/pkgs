@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "hello from the jvs.sh apt repo — installed via apt, signature verified"
