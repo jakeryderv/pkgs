@@ -33,6 +33,15 @@ cleanup() {
 trap cleanup EXIT
 
 cp -r "$ROOT/scripts" "$ROOT/packages" "$WORK/"
+
+# Drop fetched packages from the copy. Rotation is about which key signs the
+# repository, which has nothing to do with where a package came from -- and
+# keeping them would mean this test downloads from GitHub on every run, making
+# a hermetic test of signing fail whenever something unrelated is unreachable.
+for def in "$WORK"/packages/*/; do
+  if [ -f "$def/release" ]; then rm -rf "$def"; fi
+done
+
 mkdir -p "$WORK/gnupg"; chmod 700 "$WORK/gnupg"
 export GNUPGHOME="$WORK/gnupg"
 
@@ -54,12 +63,23 @@ done
 sed -i "s|^URIs: .*|URIs: $BASE|" \
   "$WORK/packages/jvs-archive-keyring/files/etc/apt/sources.list.d/jvs.sources"
 
+# Output is captured rather than discarded. A build failing here used to
+# surface as nothing but `exit 1` from whichever phase called it, which says
+# nothing about what broke.
 build() { # signer, keyring-manifest-version, keys...
   local signer="$1" kver="$2"; shift 2
-  "$WORK/scripts/update-keyring.sh" "$@" >/dev/null
-  sed -i "s|^Version: .*|Version: $kver|" "$WORK/packages/jvs-archive-keyring/manifest"
-  "$WORK/scripts/build-deb.sh" >/dev/null
-  SIGNER="$signer" UPDATE_PINS=1 "$WORK/scripts/build-repo.sh" >/dev/null 2>&1
+  local log="$WORK/build.log"
+  {
+    "$WORK/scripts/update-keyring.sh" "$@"
+    sed -i "s|^Version: .*|Version: $kver|" "$WORK/packages/jvs-archive-keyring/manifest"
+    "$WORK/scripts/build-deb.sh"
+    SIGNER="$signer" UPDATE_PINS=1 "$WORK/scripts/build-repo.sh"
+  } >"$log" 2>&1 || {
+    echo "  FAIL: build failed (signer=$signer keyring=$kver)" >&2
+    echo "  ---- last 20 lines ----" >&2
+    tail -20 "$log" >&2
+    exit 1
+  }
 }
 
 inc() { docker exec -e DEBIAN_FRONTEND=noninteractive "$CONTAINER" bash -c "$1" 2>/dev/null; }
