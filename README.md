@@ -102,9 +102,10 @@ package that has one, and fails the build if it exits non-zero.
 
 It runs with `PKG_NAME` and `PKG_VERSION` set from dpkg's view of the
 installed package, so assertions are made against what apt really put on disk
-rather than against the manifest on the builder. `termtest`'s smoke test uses
-this to catch its `VERSION` constant drifting from its manifest — the two are
-written separately and nothing else keeps them in step.
+rather than against whatever the builder believed. `termtest`'s smoke test
+compares the two, which now spans repositories: its upstream tag, the control
+version of the `.deb` that tag produced, and the version the binary reports
+all have to agree, and nothing but this notices if they stop.
 
 There is no tty, so `smoke` should stick to what works headless. It is not
 shipped in the `.deb`; `build-deb.sh` only copies `files/` and `scripts/`.
