@@ -156,6 +156,7 @@ that reason.
 ./scripts/test-rotation.sh   # verify a key rotation survives, in containers
 ./scripts/publish.sh         # repo/ -> R2
 ./scripts/update-keyring.sh  # regenerate the keyring the keyring package ships
+./scripts/sync-secrets.sh    # 1Password -> GitHub Actions secrets
 ```
 
 The first two are independent and can run in either order. `build-deb.sh`
@@ -284,13 +285,30 @@ SIGNER=old@jvs.sh UPDATE_PINS=1 ./scripts/build-repo.sh
 
 # 2. wait. every machine must run apt upgrade before step 3.
 
-# 3. switch signing to the new key
+# 3. switch signing to the new key -- locally AND in CI
 SIGNER=new@jvs.sh UPDATE_PINS=1 ./scripts/build-repo.sh
 ./scripts/publish.sh
+./scripts/sync-secrets.sh                          # <- easy to forget, see below
 
 # 4. later, once nothing needs the old key, drop it
 ./scripts/update-keyring.sh new@jvs.sh
 ```
+
+The `sync-secrets.sh` line in step 3 is load-bearing and was missing for a
+while. CI publishes on every push to `main` using `secrets.GPG_PRIVATE_KEY`
+and `vars.SIGNER_UID` — so rotating locally without updating those means the
+next push silently re-signs with the *old* key. Not broken, since machines
+still trust it at that point, but quietly back on the key you meant to retire.
+
+The script reads the key and its passphrase from 1Password and pushes both,
+rather than pasting a private key into a browser form. Before it pushes
+anything it checks three things: that the key imports, that its fingerprint is
+in the keyring this repository ships — the same guard `build-repo.sh` applies,
+for the same reason — and that the passphrase actually unlocks the key. That
+last one otherwise surfaces as a failed publish, which is the worst time to
+learn it.
+
+`--dry-run` runs the checks and changes nothing.
 
 Step 2 is the load-bearing one and has no shortcut: a machine that has not
 upgraded its keyring before step 3 lands will start failing `apt update` and
