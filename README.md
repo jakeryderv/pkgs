@@ -157,6 +157,7 @@ that reason.
 ./scripts/publish.sh         # repo/ -> R2
 ./scripts/update-keyring.sh  # regenerate the keyring the keyring package ships
 ./scripts/sync-secrets.sh    # 1Password -> GitHub Actions secrets
+./scripts/apply-cache-rules.sh  # cloudflare/cache-rules.json -> the zone
 ```
 
 The first two are independent and can run in either order. `build-deb.sh`
@@ -333,7 +334,27 @@ switch — without ever re-bootstrapping. It runs in CI.
 ## Cache rules
 
 `cloudflare/cache-rules.json` is the source of truth for the zone's cache
-behaviour, applied to the `http_request_cache_settings` phase:
+behaviour, applied to the `http_request_cache_settings` phase by
+`./scripts/apply-cache-rules.sh`:
+
+```
+./scripts/apply-cache-rules.sh           report drift, change nothing
+./scripts/apply-cache-rules.sh --apply   write the file's rules to the zone
+```
+
+Drift reporting is the default because it is the mode worth running often and
+is safe anywhere. It compares only the fields we author — the API adds `id`,
+`version`, `ref` and `last_updated` to every rule, none of which belong in a
+diff against a file that cannot know them — and preserves order, since rule
+order is evaluation order.
+
+It uses the `cf` CLI, whose `rulesets` commands cover the zone phase directly,
+with a token read from 1Password so no long-lived Cloudflare credential sits
+on disk. That token needs **Zone → Cache Rules → Edit** and nothing more; it
+is deliberately not the token CI publishes with, which never needs zone
+access.
+
+The rules themselves:
 
 - `/dists/*` — **never cached.** A stale `Packages.gz` served against a fresh
   `InRelease` is a hash mismatch, and apt exits 100. This is reproducible;
@@ -365,6 +386,13 @@ pinentry when set.
 
 The Cloudflare token here should be scoped to **Workers R2 Storage → Edit
 and nothing else** — CI only uploads objects. It never needs zone access.
+Cache-rule work uses a separate token; see "Cache rules".
+
+`CLOUDFLARE_ACCOUNT_ID` is set as a secret for wrangler's benefit, but it is
+not one — an account id appears in dashboard URLs and is routinely committed
+in `wrangler.toml`. An account-owned token can only see one account anyway, so
+it is probably redundant entirely; worth dropping and confirming a publish
+still works.
 
 To publish: edit `packages/`, bump the version, push to `main`.
 

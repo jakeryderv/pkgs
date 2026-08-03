@@ -23,8 +23,10 @@ REPO="${REPO:-jakeryderv/pkgs}"
 OP_KEY_REF="${OP_KEY_REF:-op://dev/pkgs.jvs.sh/jvs-archive-signing-key.asc}"
 OP_PASS_REF="${OP_PASS_REF:-op://dev/pkgs.jvs.sh/password}"
 OP_CF_TOKEN_REF="${OP_CF_TOKEN_REF:-op://dev/pkgs.jvs.sh/cloudflare-token}"
-OP_CF_ACCOUNT_REF="${OP_CF_ACCOUNT_REF:-op://dev/pkgs.jvs.sh/cloudflare-account-id}"
 BUCKET="${BUCKET:-pkgs}"
+# Not a secret and not in the vault: an account id appears in dashboard URLs
+# and is routinely committed in wrangler.toml. It is only needed to check the
+# token can reach the bucket, and comes from the token's own account list.
 SHIPPED_KEYRING="$ROOT/packages/jvs-archive-keyring/files/usr/share/keyrings/jvs-archive-keyring.gpg"
 
 DRY=0
@@ -103,35 +105,24 @@ fi
 echo "  passphrase unlocks the key"
 
 # ---- Cloudflare -----------------------------------------------------------
-# Optional. A Cloudflare API token is shown once at creation and cannot be read
-# back out of GitHub, so it may simply not be in the vault yet -- in which case
-# leave the existing GitHub secret alone rather than clobbering a working one
-# with nothing. Both values or neither: half-configured is a mistake, not a
-# state worth supporting.
-CF_TOKEN_LEN="$(ref_len "$OP_CF_TOKEN_REF")"
-CF_ACCT_LEN="$(ref_len "$OP_CF_ACCOUNT_REF")"
+# Optional. A token is shown once at creation and cannot be read back out of
+# GitHub, so it may simply not be in the vault yet -- in which case leave the
+# existing GitHub secret alone rather than overwriting a working one with
+# nothing.
 CF=0
-if [ "$CF_TOKEN_LEN" -gt 0 ] && [ "$CF_ACCT_LEN" -gt 0 ]; then
+if [ "$(ref_len "$OP_CF_TOKEN_REF")" -gt 0 ]; then
   CF=1
-elif [ "$CF_TOKEN_LEN" -gt 0 ] || [ "$CF_ACCT_LEN" -gt 0 ]; then
-  echo "ERROR: only one of the Cloudflare values is in the vault." >&2
-  echo "  token   : $OP_CF_TOKEN_REF" >&2
-  echo "  account : $OP_CF_ACCOUNT_REF" >&2
-  echo "Set both, or neither." >&2
-  exit 1
 else
-  echo "  cloudflare not in the vault, leaving its GitHub secrets untouched"
+  echo "  cloudflare token not in the vault, leaving its GitHub secret untouched"
 fi
 
 if [ "$CF" -eq 1 ]; then
-  CF_ACCOUNT="$(op read "$OP_CF_ACCOUNT_REF" 2>/dev/null)"
-
   # --config via process substitution rather than -H: a header on the command
   # line puts the token in argv, where any other process can read it.
   #
   # No -f, deliberately. Cloudflare answers a bad token with HTTP 400 and a
   # JSON body explaining why; -f discards the body and exits 22, which under
-  # pipefail aborts with a curl error code instead of the actual reason.
+  # pipefail aborts with a curl exit code instead of the actual reason.
   cf_api() { # path
     curl -sS -K <(printf 'header = "Authorization: Bearer %s"\n' "$(op read "$OP_CF_TOKEN_REF" 2>/dev/null)") \
       "https://api.cloudflare.com/client/v4/$1"
@@ -149,15 +140,24 @@ if [ "$CF" -eq 1 ]; then
     echo "ERROR: the Cloudflare token is '$status', not active" >&2; exit 1; }
   echo "  cloudflare token is active"
 
-  # Proves three things at once, all of which publish.sh depends on: the token
-  # carries R2 permissions, the account id goes with the token, and the bucket
-  # exists. A token that verifies but cannot see the bucket would still fail
-  # every publish.
+  # An account-owned token can see exactly one account, so the id needs no
+  # separate storage -- ask the token which account it belongs to, then confirm
+  # the bucket is there. That covers R2 scope and bucket existence at once; a
+  # token that verifies but cannot see the bucket fails every publish while
+  # looking healthy.
+  accounts="$(cf_api accounts)"
+  CF_ACCOUNT="$(printf '%s' "$accounts" | jq -r '.result[0].id // empty')"
+  if [ -z "$CF_ACCOUNT" ]; then
+    echo "ERROR: the token cannot list its own account." >&2
+    echo "  cloudflare says: $(printf '%s' "$accounts" | cf_errors)" >&2
+    exit 1
+  fi
+
   buckets="$(cf_api "accounts/$CF_ACCOUNT/r2/buckets")"
   if [ "$(printf '%s' "$buckets" | jq -r '.success')" != "true" ]; then
     echo "ERROR: could not list R2 buckets for account $CF_ACCOUNT" >&2
     echo "  cloudflare says: $(printf '%s' "$buckets" | cf_errors)" >&2
-    echo "The token needs Workers R2 Storage -> Edit, and the account must match." >&2
+    echo "The token needs Workers R2 Storage -> Edit." >&2
     exit 1
   fi
   if ! printf '%s' "$buckets" | jq -e --arg b "$BUCKET" \
@@ -171,7 +171,7 @@ fi
 if [ "$DRY" -eq 1 ]; then
   echo
   echo "dry run: nothing pushed."
-  echo "  would set: GPG_PRIVATE_KEY, GPG_PASSPHRASE$( [ "$CF" -eq 1 ] && printf ', CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID' )"
+  echo "  would set: GPG_PRIVATE_KEY, GPG_PASSPHRASE$( [ "$CF" -eq 1 ] && printf ', CLOUDFLARE_API_TOKEN' )"
   exit 0
 fi
 
@@ -179,8 +179,7 @@ echo "  pushing to $REPO"
 op read "$OP_KEY_REF"  2>/dev/null | gh secret set GPG_PRIVATE_KEY --repo "$REPO"
 op read "$OP_PASS_REF" 2>/dev/null | gh secret set GPG_PASSPHRASE  --repo "$REPO"
 if [ "$CF" -eq 1 ]; then
-  op read "$OP_CF_TOKEN_REF"   2>/dev/null | gh secret set CLOUDFLARE_API_TOKEN  --repo "$REPO"
-  op read "$OP_CF_ACCOUNT_REF" 2>/dev/null | gh secret set CLOUDFLARE_ACCOUNT_ID --repo "$REPO"
+  op read "$OP_CF_TOKEN_REF" 2>/dev/null | gh secret set CLOUDFLARE_API_TOKEN --repo "$REPO"
 fi
 
 # CI signs with vars.SIGNER_UID, defaulting to pkgs@jvs.sh. During a rotation
