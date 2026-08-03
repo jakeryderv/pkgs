@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Fetch externally-built .debs into vendor/, verifying each against its pin.
 #
-#   ./scripts/fetch-releases.sh            fetch and verify
-#   ./scripts/fetch-releases.sh --update   re-pin to whatever upstream serves
+#   ./scripts/fetch-releases.sh                  fetch and verify everything
+#   ./scripts/fetch-releases.sh --update         re-pin everything
+#   ./scripts/fetch-releases.sh --update <name>  re-pin one package
+#
+# The single-package form exists for automation. Re-pinning everything to bump
+# one package would quietly accept a change in any of the others -- which is
+# precisely the tampering the pins are here to refuse.
 #
 # Not everything worth publishing is a shell script. Anything with a real
 # build (Go, Rust, C) should build in its own repo, attach the .deb to a
@@ -35,11 +40,16 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENDOR="$ROOT/vendor"
 
 UPDATE=0
-case "${1:-}" in
-  --update) UPDATE=1 ;;
-  "") ;;
-  *) echo "usage: $0 [--update]" >&2; exit 1 ;;
-esac
+ONLY=""
+usage() { echo "usage: $0 [--update] [package]" >&2; exit 1; }
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --update) UPDATE=1 ;;
+    -*)       usage ;;
+    *)        if [ -n "$ONLY" ]; then usage; fi; ONLY="$1" ;;
+  esac
+  shift
+done
 
 command -v curl     >/dev/null || { echo "ERROR: curl is required" >&2; exit 1; }
 command -v dpkg-deb >/dev/null || { echo "ERROR: dpkg-deb is required" >&2; exit 1; }
@@ -69,6 +79,7 @@ for def in "$ROOT"/packages/*/; do
   name="$(basename "$def")"
   rel="$def/release"
   [ -f "$rel" ] || continue
+  if [ -n "$ONLY" ] && [ "$name" != "$ONLY" ]; then continue; fi
   declared=$((declared+1))
 
   repo="$(field Repo "$rel")"
@@ -147,18 +158,28 @@ for def in "$ROOT"/packages/*/; do
   [ "$had_asset" -eq 1 ] || { echo "ERROR $name: release declares no Asset" >&2; exit 1; }
 done
 
+if [ -n "$ONLY" ] && [ "$declared" -eq 0 ]; then
+  echo "ERROR: no package named '$ONLY' declares a release" >&2
+  exit 1
+fi
+
 # Drop anything vendor/ still holds that is no longer declared. Without this a
 # retagged package leaves its previous .deb behind and build-repo.sh sweeps it
 # back into the pool -- exactly the stale-artifact failure that build-deb.sh
 # wipes dist/ to prevent.
-for f in "$VENDOR"/*.deb; do
-  base="$(basename "$f")"
-  keep=0
-  for e in ${expected[@]+"${expected[@]}"}; do
-    [ "$base" = "$e" ] && { keep=1; break; }
+#
+# Skipped when scoped to one package: `expected` then covers only that
+# package, so pruning against it would delete every other package's artifacts.
+if [ -z "$ONLY" ]; then
+  for f in "$VENDOR"/*.deb; do
+    base="$(basename "$f")"
+    keep=0
+    for e in ${expected[@]+"${expected[@]}"}; do
+      [ "$base" = "$e" ] && { keep=1; break; }
+    done
+    [ "$keep" -eq 1 ] || { rm -f "$f"; echo "  pruned  $base"; }
   done
-  [ "$keep" -eq 1 ] || { rm -f "$f"; echo "  pruned  $base"; }
-done
+fi
 
 if [ "$declared" -eq 0 ]; then
   echo "no packages declare a release; nothing to fetch"

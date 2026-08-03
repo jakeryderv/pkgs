@@ -1,0 +1,131 @@
+name: autopin
+
+# Watch every package that declares a release, and open a PR when upstream has
+# tagged something newer than what is pinned here.
+#
+# Pull rather than push, deliberately. A dispatch from each tool repo would be
+# faster, but repository_dispatch needs `contents: write` on this repository --
+# there is no dispatch-only permission -- so every tool repo would hold a token
+# that can push here, and pushing here publishes under our signing key. Polling
+# needs no token in any tool repo at all.
+#
+# The PR is the review moment, not a safety gate: `verify` already runs before
+# `publish` either way. What it buys is a diff showing exactly which bytes
+# changed and when each version entered the repository.
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  autopin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev
+
+      - name: Check for newer releases and open PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          opened=0 checked=0
+          for def in packages/*/; do
+            rel="$def/release"
+            [ -f "$rel" ] || continue
+            name="$(basename "$def")"
+            checked=$((checked+1))
+
+            repo="$(awk '$1=="Repo:"{print $2; exit}' "$rel")"
+            pinned="$(awk '$1=="Tag:"{print $2; exit}' "$rel")"
+
+            latest="$(gh release view --repo "$repo" --json tagName --jq .tagName 2>/dev/null || true)"
+            if [ -z "$latest" ]; then
+              echo "  $name: no releases upstream, skipping"
+              continue
+            fi
+            if [ "$latest" = "$pinned" ]; then
+              echo "  $name: up to date ($pinned)"
+              continue
+            fi
+            echo "  $name: $pinned -> $latest"
+
+            # Deterministic branch name, so a PR left open from an earlier run
+            # is not reopened on every subsequent schedule.
+            branch="autopin/$name-$latest"
+            if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+              echo "    branch already exists, skipping"
+              continue
+            fi
+
+            # Asset filenames usually carry the version, so a new tag means new
+            # names -- bumping Tag alone would leave the file pointing at
+            # artifacts that no longer exist. Take the names from the release
+            # itself rather than guessing at a naming convention.
+            assets="$(gh release view "$latest" --repo "$repo" --json assets \
+                      --jq '.assets[].name | select(endswith(".deb"))')"
+            if [ -z "$assets" ]; then
+              echo "    release has no .deb assets, skipping"
+              continue
+            fi
+
+            git checkout -q -B "$branch" origin/main
+
+            # Regenerates the file rather than editing it. Fine for the current
+            # single-version format; revisit if multi-version retention lands,
+            # since that would have blocks this does not know how to preserve.
+            {
+              printf 'Repo:   %s\n' "$repo"
+              printf 'Tag:    %s\n' "$latest"
+              printf '%s\n' "$assets" | while read -r a; do printf 'Asset:  %s\n' "$a"; done
+            } > "$rel"
+
+            # Scoped to this package on purpose: a bare --update would re-pin
+            # every other package too, silently accepting any change in them.
+            ./scripts/fetch-releases.sh --update "$name"
+
+            # Provenance, checked before anything is proposed. The pin proves
+            # the bytes have not moved since we looked; this proves they were
+            # built by that repository's own workflow.
+            for asset in $assets; do
+              echo "    verifying provenance of $asset"
+              gh attestation verify "vendor/$asset" --repo "$repo"
+            done
+
+            if git diff --quiet -- "$rel"; then
+              echo "    nothing actually changed, skipping"
+              git checkout -q main
+              continue
+            fi
+
+            git add "$rel"
+            git commit -q \
+              -m "$name: $pinned -> $latest" \
+              -m "Opened by the autopin workflow. Hashes rewritten by fetch-releases.sh, and each asset's build provenance verified against $repo before this PR existed. Merging publishes it."
+
+            printf '%s\n' \
+              "Upstream tagged \`$latest\`; this repository pinned \`$pinned\`." \
+              "" \
+              "Asset names were taken from the release, hashes re-pinned with \`fetch-releases.sh --update $name\`, and build provenance verified with \`gh attestation verify\` against [$repo](https://github.com/$repo)." \
+              "" \
+              "\`verify\` installs this in Debian and Ubuntu containers and runs the package's smoke test. Merging publishes it." \
+              > /tmp/pr-body.md
+
+            git push -q origin "$branch"
+            gh pr create --title "$name: $pinned -> $latest" \
+                         --body-file /tmp/pr-body.md \
+                         --head "$branch" --base main
+            opened=$((opened+1))
+            git checkout -q main
+          done
+
+          echo "checked $checked package(s), opened $opened PR(s)"
