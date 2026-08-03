@@ -187,10 +187,16 @@ Both are scoped `http.host eq "pkgs.jvs.sh"` and do not affect `jvs.sh`.
 
 ## CI
 
-`verify` runs on every push and PR: builds with a throwaway key and installs
-in real Debian and Ubuntu containers, running each package's smoke test and a
-negative test proving apt rejects the wrong key. Needs no secrets, so it runs
-on PRs from anywhere.
+`verify` runs on every push and PR: lints, then builds with a throwaway key
+and installs in real Debian and Ubuntu containers, running each package's
+smoke test and a negative test proving apt rejects the wrong key. Needs no
+secrets, so it runs on PRs from anywhere.
+
+Linting is `shellcheck -S warning` over the scripts, the packaged binaries and
+the smoke tests, plus `sh -n scripts/install.sh` — dash's own parser rather
+than shellcheck's, for the one file that ships to users. The tree is clean at
+`warning`, so the gate is a ratchet rather than a cleanup task. It runs before
+the container tests because it takes seconds and they take minutes.
 
 `publish` runs on `main` only and requires `GPG_PRIVATE_KEY`,
 `GPG_PASSPHRASE`, `CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID`. It
