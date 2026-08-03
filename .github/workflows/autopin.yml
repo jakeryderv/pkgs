@@ -59,11 +59,14 @@ jobs:
             fi
             echo "  $name: $pinned -> $latest"
 
-            # Deterministic branch name, so a PR left open from an earlier run
-            # is not reopened on every subsequent schedule.
+            # Deterministic branch name, and the guard looks for a PR rather
+            # than a branch. Two reasons: a run that pushed a branch and then
+            # failed must be able to retry, and a PR closed without merging is
+            # a decision to skip that version -- reopening it every morning
+            # would be worse than useless.
             branch="autopin/$name-$latest"
-            if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
-              echo "    branch already exists, skipping"
+            if [ -n "$(gh pr list --head "$branch" --state all --json number --jq '.[0].number // empty')" ]; then
+              echo "    already proposed, skipping"
               continue
             fi
 
@@ -120,7 +123,10 @@ jobs:
               "\`verify\` installs this in Debian and Ubuntu containers and runs the package's smoke test. Merging publishes it." \
               > /tmp/pr-body.md
 
-            git push -q origin "$branch"
+            # Force, because a previous run may have pushed this branch and
+            # then failed before opening the PR. Safe: the name is
+            # bot-generated and, per the guard above, has no PR attached.
+            git push -qf origin "$branch"
             gh pr create --title "$name: $pinned -> $latest" \
                          --body-file /tmp/pr-body.md \
                          --head "$branch" --base main
