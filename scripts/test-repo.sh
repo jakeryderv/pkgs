@@ -42,38 +42,71 @@ GNUPGHOME="$DECOY" gpg --export decoy@example.invalid > "$REPO/.wrong-keyring.gp
 
 python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$REPO" >/dev/null 2>&1 &
 HTTPD=$!
-cleanup() { kill "$HTTPD" 2>/dev/null || true; rm -rf "$DECOY" "$REPO/.wrong-keyring.gpg"; }
+# Container output is captured rather than discarded. A failing smoke test
+# reports a bare exit code otherwise, which says nothing about what broke.
+LOG="$(mktemp)"
+cleanup() {
+  kill "$HTTPD" 2>/dev/null || true
+  rm -rf "$DECOY" "$REPO/.wrong-keyring.gpg" "$LOG"
+}
 trap cleanup EXIT
 sleep 1
 
+# The container script is fed on stdin and takes its inputs through the
+# environment, rather than being interpolated into a `bash -c` string. The
+# smoke loop below needs its variables expanded inside the container, and
+# escaping those through a host-side double-quoted string is unreadable.
+#
+# packages/ is mounted so smoke tests can run without being baked into the
+# .deb: a smoke test asserts things a user should never have shipped to them.
 run_in() { # image, keyring-file-in-repo, expect-success(0/1)
   local image="$1" keyring="$2" expect="$3" rc=0
-  docker run --rm --network host -v "$REPO:/srv/repo:ro" "$image" bash -c "
+  docker run --rm -i --network host \
+    -v "$REPO:/srv/repo:ro" -v "$ROOT/packages:/srv/packages:ro" \
+    -e "KEYRING=$keyring" -e "PORT=$PORT" -e "PKGS=$PKGS" \
+    -e DEBIAN_FRONTEND=noninteractive \
+    "$image" bash -s >"$LOG" 2>&1 <<'CONTAINER' || rc=$?
 set -e
-export DEBIAN_FRONTEND=noninteractive
 mkdir -p /etc/apt/sources.list.d.bak
 mv /etc/apt/sources.list.d/* /etc/apt/sources.list.d.bak/ 2>/dev/null || true
 : > /etc/apt/sources.list 2>/dev/null || true
-install -D -m 0644 /srv/repo/$keyring /usr/share/keyrings/jvs-archive-keyring.gpg
-cat > /etc/apt/sources.list.d/jvs.sources <<EOF
-Types: deb
-URIs: http://127.0.0.1:$PORT
-Suites: stable
-Components: main
-Architectures: amd64
-Signed-By: /usr/share/keyrings/jvs-archive-keyring.gpg
-EOF
+install -D -m 0644 "/srv/repo/$KEYRING" /usr/share/keyrings/jvs-archive-keyring.gpg
+
+# printf rather than a heredoc: this script is itself being read from stdin,
+# and a nested heredoc reads from that same stream.
+printf 'Types: deb\nURIs: http://127.0.0.1:%s\nSuites: stable\nComponents: main\nArchitectures: amd64\nSigned-By: /usr/share/keyrings/jvs-archive-keyring.gpg\n' \
+  "$PORT" > /etc/apt/sources.list.d/jvs.sources
+
 apt-get update
 apt-get install -y $PKGS
-hello-jvs
-" >/dev/null 2>&1 || rc=$?
+
+# Installing a package proves dpkg accepted it, not that it works. Run every
+# smoke test belonging to a package that actually got installed.
+#
+# PKG_VERSION comes from dpkg rather than from the manifest on the host, so a
+# smoke test compares the binary against the version apt really installed.
+ran=0
+for def in /srv/packages/*/; do
+  name="$(basename "$def")"
+  [ -f "$def/smoke" ] || continue
+  dpkg -s "$name" >/dev/null 2>&1 || continue
+  echo "--- smoke: $name ---"
+  PKG_NAME="$name" \
+  PKG_VERSION="$(dpkg-query -W -f='${Version}' "$name")" \
+    sh "$def/smoke"
+  ran=$((ran+1))
+done
+echo "--- $ran smoke test(s) passed ---"
+CONTAINER
 
   if [ "$expect" -eq 0 ] && [ "$rc" -eq 0 ]; then
-    echo "  PASS  $image installs"
+    echo "  PASS  $image installs ($(awk '/smoke test\(s\) passed/{print $2}' "$LOG") smoke test(s))"
   elif [ "$expect" -ne 0 ] && [ "$rc" -ne 0 ]; then
     echo "  PASS  $image correctly rejects the wrong key (exit $rc)"
   else
     echo "  FAIL  $image: expected $( [ "$expect" -eq 0 ] && echo success || echo failure ), got exit $rc" >&2
+    echo "  ---- last 30 lines ----" >&2
+    tail -30 "$LOG" >&2
     return 1
   fi
 }

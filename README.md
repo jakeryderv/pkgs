@@ -44,11 +44,32 @@ packages/<name>/
   manifest          Debian control fields
   files/            tree to install, rooted at /
   scripts/          optional postinst, prerm, …
+  smoke             optional; run in the container after install
 ```
 
 Anything with a real build should produce its `.deb` in its own repo, publish
 it to a GitHub Release, and land in `dist/` — the indexer does not care where
 a `.deb` came from.
+
+### smoke
+
+Installing a package proves dpkg accepted it, not that it works. `test-repo.sh`
+runs `packages/<name>/smoke` inside the container after install, for every
+package that has one, and fails the build if it exits non-zero.
+
+It runs with `PKG_NAME` and `PKG_VERSION` set from dpkg's view of the
+installed package, so assertions are made against what apt really put on disk
+rather than against the manifest on the builder. `termtest`'s smoke test uses
+this to catch its `VERSION` constant drifting from its manifest — the two are
+written separately and nothing else keeps them in step.
+
+There is no tty, so `smoke` should stick to what works headless. It is not
+shipped in the `.deb`; `build-deb.sh` only copies `files/` and `scripts/`.
+
+A convention rather than a list in `test-repo.sh` on purpose: a new package
+should be tested because it exists, not because someone remembered to go and
+add it. `termtest` shipped for a release installed-but-never-run for exactly
+that reason.
 
 ## Building
 
@@ -167,8 +188,9 @@ Both are scoped `http.host eq "pkgs.jvs.sh"` and do not affect `jvs.sh`.
 ## CI
 
 `verify` runs on every push and PR: builds with a throwaway key and installs
-in real Debian and Ubuntu containers, including a negative test proving apt
-rejects the wrong key. Needs no secrets, so it runs on PRs from anywhere.
+in real Debian and Ubuntu containers, running each package's smoke test and a
+negative test proving apt rejects the wrong key. Needs no secrets, so it runs
+on PRs from anywhere.
 
 `publish` runs on `main` only and requires `GPG_PRIVATE_KEY`,
 `GPG_PASSPHRASE`, `CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID`. It

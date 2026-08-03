@@ -1,0 +1,29 @@
+#!/bin/sh
+# Smoke test, run inside the container by scripts/test-repo.sh after install.
+#
+# PKG_NAME and PKG_VERSION are set from dpkg's view of the installed package,
+# so anything asserted here is asserted against what apt actually put on disk.
+set -eu
+
+# The version is written twice -- `Version:` in the manifest, and VERSION in
+# the script itself -- and nothing keeps them in step. A drift here means the
+# binary lies about which release it is, which is worth catching at the point
+# the two can first be compared.
+got="$(termtest version | awk '{print $2}')"
+[ "$got" = "$PKG_VERSION" ] || {
+    echo "smoke: termtest reports $got, dpkg has $PKG_VERSION" >&2
+    exit 1
+}
+
+# `all` is the runner for everything non-interactive and side-effect free, so
+# it exercises the bulk of the script. There is no tty here, which is fine:
+# the point is that nothing crashes under `set -u`, not that escapes render.
+termtest all >/dev/null
+termtest help >/dev/null
+
+# An unknown subcommand must be an error. Without this, a dispatch table that
+# silently falls through would still pass everything above.
+if termtest definitely-not-a-subcommand >/dev/null 2>&1; then
+    echo "smoke: unknown subcommand should have failed" >&2
+    exit 1
+fi

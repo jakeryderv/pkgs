@@ -1,0 +1,8 @@
+#!/bin/sh
+# Smoke test, run inside the container by scripts/test-repo.sh after install.
+#
+# PKG_NAME and PKG_VERSION are set from dpkg's view of the installed package,
+# so anything asserted here is asserted against what apt actually put on disk.
+set -eu
+
+hello-jvs | grep -q 'hello from the jvs.sh apt repo'
