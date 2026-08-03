@@ -17,6 +17,13 @@ IMAGES="${IMAGES:-debian:stable ubuntu:24.04}"
 
 [ -d "$REPO" ] || { echo "ERROR: no repo/ — run build-repo.sh first" >&2; exit 1; }
 
+# Install every package the index advertises, not just the smoke package.
+# A package that is built and published but never installed in a test can be
+# broken -- missing file, unsatisfiable dependency -- with everything green.
+PKGS="$(awk '/^Package:/{print $2}' "$REPO/dists/stable/main/binary-amd64/Packages" | sort -u | tr '\n' ' ')"
+[ -n "$PKGS" ] || { echo "ERROR: no packages in the index" >&2; exit 1; }
+echo "  packages under test: $PKGS"
+
 # Decoy key for the negative test, in its own keyring so it can never be
 # confused with the real signing key.
 DECOY="$ROOT/.decoy-gnupg"
@@ -57,7 +64,7 @@ Architectures: amd64
 Signed-By: /usr/share/keyrings/jvs-archive-keyring.gpg
 EOF
 apt-get update
-apt-get install -y hello-jvs
+apt-get install -y $PKGS
 hello-jvs
 " >/dev/null 2>&1 || rc=$?
 

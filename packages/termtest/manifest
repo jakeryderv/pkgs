@@ -1,0 +1,18 @@
+Package: termtest
+Version: 1.1.0
+Section: utils
+Priority: optional
+Architecture: all
+Maintainer: Jake Van Slyke <pkgs@jvs.sh>
+Suggests: git, git-delta, xdg-utils
+Description: Probe what your terminal and multiplexer actually render
+ Reports which capabilities a terminal genuinely supports -- hyperlinks,
+ images, colour depth, unicode width, and similar -- rather than what its
+ TERM value claims.
+ .
+ Running the same subcommand inside and outside tmux is the useful move: the
+ difference shows what the multiplexer is filtering, as opposed to what the
+ terminal itself lacks.
+ .
+ Everything it probes for beyond coreutils is optional, so the suggested
+ packages only widen what can be tested.

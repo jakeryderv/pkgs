@@ -1,0 +1,640 @@
+#!/usr/bin/env bash
+# ============================================================================
+# termtest — probe what your terminal + multiplexer actually render
+#
+#   termtest <subcommand> [args]
+#   termtest help            list subcommands
+#
+# The useful move is running the same subcommand inside tmux and outside it:
+# the difference is what tmux is filtering, as opposed to what the terminal
+# genuinely lacks.
+#
+# Exit codes: 0 ok · 1 usage error · 2 missing dependency
+# ============================================================================
+
+set -uo pipefail
+
+readonly VERSION="1.1.0"
+readonly PROG="${0##*/}"
+
+# ---------------------------------------------------------------------------
+# output helpers
+# ---------------------------------------------------------------------------
+
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    C_HDR=$'\033[1;34m'
+    C_DIM=$'\033[2m'
+    C_ERR=$'\033[1;31m'
+    C_RST=$'\033[0m'
+else
+    C_HDR=''
+    C_DIM=''
+    C_ERR=''
+    C_RST=''
+fi
+
+hdr() { printf '\n%s▸ %s%s\n' "$C_HDR" "$1" "$C_RST"; }
+note() { printf '%s  %s%s\n' "$C_DIM" "$1" "$C_RST"; }
+err() { printf '%s%s: %s%s\n' "$C_ERR" "$PROG" "$1" "$C_RST" >&2; }
+
+in_tmux() { [ -n "${TMUX:-}" ]; }
+
+need_tty() {
+    [ -t 1 ] && return 0
+    err "'$1' needs a real terminal (stdout is not a tty)"
+    return 1
+}
+
+# Emit an escape sequence through tmux's DCS passthrough when inside tmux.
+# Needs `set -g allow-passthrough on` (or `all`).
+#
+# Pass the sequence without its leading ESC, e.g. ']9;hello\033\\'.
+#
+# tmux ends the passthrough at the first bare ESC \, so EVERY ESC in the
+# payload has to be doubled — including the wrapped sequence's own terminator,
+# not just the introducer. Doubling only the introducer truncates the sequence
+# and leaves the terminal waiting for a terminator that never arrives.
+passthru() {
+    local seq
+    seq=$(printf '\033%b' "$1")
+    if in_tmux; then
+        printf '\033Ptmux;%s\033\\' "${seq//$'\033'/$'\033\033'}"
+    else
+        printf '%s' "$seq"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# cmd: env
+# ---------------------------------------------------------------------------
+
+cmd_env() {
+    hdr "environment"
+    printf '  %-14s %s\n' "TERM" "${TERM:-unset}"
+    printf '  %-14s %s\n' "TERM_PROGRAM" "${TERM_PROGRAM:-unset}"
+    printf '  %-14s %s\n' "COLORTERM" "${COLORTERM:-unset (truecolor apps may fall back)}"
+    printf '  %-14s %s\n' "size" "$(tput cols 2>/dev/null)x$(tput lines 2>/dev/null)"
+    printf '  %-14s %s\n' "terminfo colors" "$(tput colors 2>/dev/null || echo n/a)"
+
+    if in_tmux; then
+        printf '  %-14s %s\n' "tmux" "$(tmux -V 2>/dev/null) (inside)"
+        printf '  %-14s %s\n' "features" \
+            "$(tmux display -p '#{client_termfeatures}' 2>/dev/null || echo n/a)"
+        printf '  %-14s %s\n' "passthrough" \
+            "$(tmux show -gv allow-passthrough 2>/dev/null || echo n/a)"
+        printf '  %-14s %s\n' "set-clipboard" \
+            "$(tmux show -gv set-clipboard 2>/dev/null || echo n/a)"
+        printf '  %-14s %s\n' "mouse" \
+            "$(tmux show -gv mouse 2>/dev/null || echo n/a)"
+    else
+        printf '  %-14s %s\n' "tmux" "not running"
+    fi
+
+    hdr "toolchain"
+    printf '  %-14s %s\n' "less" "$(less --version 2>/dev/null | head -1 || echo missing)"
+    printf '  %-14s %s\n' "delta" "$(delta --version 2>/dev/null || echo missing)"
+    printf '  %-14s %s\n' "git" "$(git --version 2>/dev/null || echo missing)"
+    printf '  %-14s %s\n' "xdg-open" "$(command -v xdg-open || echo missing)"
+    printf '  %-14s %s\n' "browser" "$(xdg-settings get default-web-browser 2>/dev/null || echo n/a)"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: link / delta
+# ---------------------------------------------------------------------------
+
+cmd_link() {
+    local url="${1:-https://example.com}" text="${2:-CLICK ME}"
+    hdr "OSC 8 hyperlink"
+    printf '\033]8;;%s\033\\%s\033]8;;\033\\\n' "$url" "$text"
+    if in_tmux; then
+        # Probe rather than assume: tmux only gets the click if the config binds it.
+        if tmux list-keys -T root 2>/dev/null | grep -q 'C-MouseDown1Pane'; then
+            note "Ctrl+click         (tmux binds C-MouseDown1Pane -> xdg-open)"
+        fi
+        note "Shift+Ctrl+click   (Shift bypasses tmux's mouse capture)"
+        note "or keyboard: prefix v -> move cursor onto it -> o"
+    else
+        note "Ctrl+click         (hold Ctrl alone to underline every link)"
+    fi
+}
+
+cmd_delta() {
+    command -v delta >/dev/null || {
+        err "delta not installed"
+        return 2
+    }
+    command -v git >/dev/null || {
+        err "git not installed"
+        return 2
+    }
+    local file="${1:-}"
+    if [ -z "$file" ]; then
+        file=$(git ls-files 2>/dev/null | head -1)
+        [ -z "$file" ] && {
+            err "not in a git repo; pass a file explicitly"
+            return 1
+        }
+    fi
+    hdr "delta hyperlinks: $file"
+    git blame -- "$file" 2>/dev/null |
+        delta --hyperlinks --paging=never |
+        cat -v |
+        grep -o ']8;;[^^]*' |
+        sed 's/^]8;;//' |
+        awk 'NF' |
+        sort -u
+    note "expect https://<host>/.../commit/<sha> if commit linking works"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: styles / underlines / colors / unicode
+# ---------------------------------------------------------------------------
+
+cmd_styles() {
+    hdr "SGR text attributes"
+    printf '  \033[1mbold\033[0m            ESC[1m\n'
+    printf '  \033[2mdim / faint\033[0m     ESC[2m\n'
+    printf '  \033[3mitalic\033[0m          ESC[3m\n'
+    printf '  \033[4munderline\033[0m       ESC[4m\n'
+    printf '  \033[7mreverse\033[0m         ESC[7m\n'
+    printf '  \033[9mstrikethrough\033[0m   ESC[9m   <- tmux "strikethrough" feature\n'
+    printf '  \033[53moverline\033[0m        ESC[53m\n'
+    printf '  \033[5mblink\033[0m           ESC[5m   (widely ignored by design)\n'
+    note "anything rendering as plain text is unsupported or being stripped"
+}
+
+cmd_underlines() {
+    hdr "underline styles (tmux usstyle)"
+    printf '  \033[4:1msingle\033[0m         ESC[4:1m\n'
+    printf '  \033[4:2mdouble\033[0m         ESC[4:2m\n'
+    printf '  \033[4:3mcurly\033[0m          ESC[4:3m\n'
+    printf '  \033[4:4mdotted\033[0m         ESC[4:4m\n'
+    printf '  \033[4:5mdashed\033[0m         ESC[4:5m\n'
+    hdr "underline colors (SGR 58)"
+    printf '  \033[4:3m\033[58:2::255:80:80mcurly red\033[0m      ESC[58:2::r:g:b m\n'
+    printf '  \033[4:3m\033[58:5:220mcurly yellow\033[0m   ESC[58:5:N m\n'
+    note "all five identical = usstyle is not getting through"
+    note "this is what nvim LSP diagnostics and spell squiggles ride on"
+}
+
+cmd_colors() {
+    local i
+    hdr "16 base colors"
+    printf '  '
+    for i in $(seq 0 7); do printf '\033[48;5;%dm  \033[0m' "$i"; done
+    printf '  normal\n  '
+    for i in $(seq 8 15); do printf '\033[48;5;%dm  \033[0m' "$i"; done
+    printf '  bright\n'
+
+    hdr "256 color cube"
+    for i in $(seq 16 231); do
+        printf '\033[48;5;%dm \033[0m' "$i"
+        [ $(((i - 15) % 36)) -eq 0 ] && printf '\n'
+    done
+    printf '\n'
+
+    hdr "24-bit truecolor gradient (tmux RGB feature)"
+    printf '  '
+    for i in $(seq 0 77); do
+        printf '\033[48;2;%d;%d;%dm \033[0m' \
+            $((255 - i * 3)) $((i * 3)) $((128 + (i % 2) * 60))
+    done
+    printf '\n'
+    note "smooth = truecolor · visible banding = 256-color fallback"
+}
+
+cmd_unicode() {
+    hdr "unicode width & rendering"
+    printf '  box drawing    ┌─┬─┐ │ ├─┼─┤ └─┴─┘ ╔═╦═╗\n'
+    printf '  powerline                       \n'
+    printf '  braille        ⠁⠂⠄⡀⢀⠠⠐⠈ ⣿⣷⣯⣟⡿⢿⣻⣽\n'
+    printf '  CJK (2 cells)  |日本語テスト|\n'
+    printf '  emoji          |😀🎉🚀|\n'
+    printf '  ZWJ sequence   |👨‍👩‍👧‍👦|  (one glyph if supported)\n'
+    printf '  combining      |é| vs |é|  (precomposed vs e+U+0301)\n'
+    printf '  nerd font      \n'
+    note "misaligned | pipes = width miscalculation"
+    note "tmux 3.6 adds codepoint-widths to correct this"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: clip / title / cwd / notify / graphics
+# ---------------------------------------------------------------------------
+
+cmd_clip() {
+    command -v base64 >/dev/null || {
+        err "base64 not installed"
+        return 2
+    }
+    local msg="${1:-$PROG-osc52-$(date +%s)}" b64
+    b64=$(printf '%s' "$msg" | base64 | tr -d '\n')
+    hdr "OSC 52 clipboard write"
+    printf '\033]52;c;%s\033\\' "$b64"
+    note "sent: $msg"
+    note "paste somewhere (Ctrl+Shift+V) and compare"
+    note "tmux relays this when set-clipboard is on"
+}
+
+cmd_title() {
+    local t="${1:-$PROG title probe}"
+    hdr "window title (OSC 0)"
+    printf '\033]0;%s\033\\' "$t"
+    note "sent: $t"
+    note "inside tmux this hits the tmux window name unless allow-rename is off"
+}
+
+cmd_cwd() {
+    # hostname is absent on minimal Debian installs; an empty host is still a
+    # valid file:// URL, so degrade rather than emit "file://$PWD" with a gap.
+    local host
+    host=$(hostname 2>/dev/null || echo localhost)
+    hdr "working directory reporting (OSC 7)"
+    printf '\033]7;file://%s%s\033\\' "$host" "$PWD"
+    note "sent: file://$host$PWD"
+    note "if supported, new splits/tabs open here"
+}
+
+cmd_notify() {
+    local title="${1:-$PROG}" body="${2:-notification works}"
+    hdr "desktop notifications"
+    passthru "]9;${body}\033\\"
+    note "sent OSC 9   (iTerm2-style)"
+    passthru "]777;notify;${title};${body}\033\\"
+    note "sent OSC 777 (urxvt-style)"
+    note "one, both, or neither may appear — support varies"
+}
+
+cmd_graphics() {
+    hdr "inline graphics probe"
+    # 8x8 white square, kitty protocol, RGB direct. Deliberately tiny:
+    # unsupported terminals print the payload as text.
+    local px b64
+    px=$(head -c 192 /dev/zero | tr '\0' '\377')
+    b64=$(printf '%s' "$px" | base64 | tr -d '\n')
+    printf '  kitty protocol: '
+    passthru "_Ga=T,f=24,s=8,v=8,m=0;${b64}\033\\\\"
+    printf '\n  sixel:          '
+    passthru "Pq#0;2;100;0;0#0!20~-\033\\\\"
+    printf '\n'
+    note "a block or colored bar = supported · nothing or garbage = not"
+    note "inside tmux both need allow-passthrough on"
+}
+
+# ---------------------------------------------------------------------------
+# cmd: cursor / keys  (interactive)
+# ---------------------------------------------------------------------------
+
+cmd_cursor() {
+    need_tty cursor || return 1
+    local n d
+    hdr "cursor shapes (DECSCUSR)"
+    for n in 1 2 3 4 5 6; do
+        case $n in
+        1) d="blinking block" ;; 2) d="steady block" ;;
+        3) d="blinking underline" ;; 4) d="steady underline" ;;
+        5) d="blinking bar" ;; 6) d="steady bar" ;;
+        esac
+        printf '  \033[%d q%-20s' "$n" "$d"
+        read -rp "  [Enter]" _ </dev/tty
+    done
+    printf '\033[2 q'
+    note "reset to steady block"
+}
+
+cmd_keys() {
+    need_tty keys || return 1
+    command -v od >/dev/null || {
+        err "od not installed"
+        return 2
+    }
+    hdr "extended keys (tmux extkeys / CSI u)"
+    note "press keys to see raw bytes · q to quit"
+    note "try: Enter then Ctrl+Enter · Shift+Enter · Ctrl+/ · F13"
+    note "identical bytes = no CSI u · distinct like ESC[13;5u = working"
+    note "read is one byte at a time, so a CSI u key prints across several lines"
+    printf '\n'
+    local key
+    while IFS= read -rsn1 key </dev/tty; do
+        [ "$key" = "q" ] && break
+        if [ -z "$key" ]; then
+            printf '  %-14s hex: 0d or 0a\n' "CR/LF"
+            continue
+        fi
+        printf '  %-14s hex:%s\n' \
+            "$(printf '%s' "$key" | cat -v)" \
+            "$(printf '%s' "$key" | od -An -tx1 | tr -s ' ')"
+    done
+    printf '\n'
+}
+
+# ---------------------------------------------------------------------------
+# cmd: all
+# ---------------------------------------------------------------------------
+
+cmd_all() {
+    cmd_env
+    cmd_styles
+    cmd_underlines
+    cmd_colors
+    cmd_unicode
+    cmd_link
+    printf '\n'
+    note "interactive extras: $PROG cursor · $PROG keys"
+    note "side effects:       $PROG clip · title · cwd · notify · graphics"
+}
+
+# ---------------------------------------------------------------------------
+# help
+# ---------------------------------------------------------------------------
+
+usage() {
+    cat <<EOF
+
+  ${PROG} — terminal capability probe                            v${VERSION}
+
+  USAGE
+    ${PROG} <subcommand> [args]
+    ${PROG} help <subcommand>        detailed help for one subcommand
+
+  RUNNERS
+    all                 every non-interactive test in one pass
+    env                 TERM, tmux version + features, toolchain versions
+
+  HYPERLINKS
+    link [url] [text]   emit an OSC 8 link + the right click modifier
+    delta [file]        URLs delta actually emits (via git blame)
+
+  RENDERING
+    styles              bold, italic, strikethrough, overline, dim, blink
+    underlines          single/double/curly/dotted/dashed + underline color
+    colors              16 base, 256 cube, 24-bit truecolor gradient
+    unicode             box, powerline, braille, CJK, emoji, ZWJ, nerd font
+
+  SEQUENCES (side effects)
+    clip [text]         write to clipboard via OSC 52
+    title [text]        set window title via OSC 0
+    cwd                 report working directory via OSC 7
+    notify [t] [body]   desktop notification via OSC 9 and OSC 777
+    graphics            kitty graphics protocol + sixel probe
+
+  INTERACTIVE
+    cursor              step through 6 cursor shapes (Enter to advance)
+    keys                print raw bytes per keypress (q to quit)
+
+  META
+    help [subcommand]   this text, or detail on one subcommand
+    version             print version
+
+  TIP
+    Run '${PROG} all' inside tmux and again outside. The difference tells
+    you what tmux is filtering versus what the terminal genuinely lacks.
+
+EOF
+}
+
+cmd_help() {
+    [ $# -eq 0 ] && {
+        usage
+        return 0
+    }
+    case "$1" in
+    all)
+        cat <<EOF
+
+  ${PROG} all
+
+  Runs env, styles, underlines, colors, unicode and link in sequence.
+  Skips anything interactive or with side effects.
+
+  Safe to pipe to a file, though the escape codes will be literal:
+    ${PROG} all | cat -v > term-report.txt
+EOF
+        ;;
+    env)
+        cat <<EOF
+
+  ${PROG} env
+
+  Reports TERM, TERM_PROGRAM, COLORTERM, window size, terminfo color count,
+  and — when inside tmux — the tmux version, negotiated client termfeatures,
+  allow-passthrough, set-clipboard and mouse settings.
+
+  Also prints versions for less, delta, git, xdg-open and the default browser.
+  Start here when something is not rendering; it usually names the culprit.
+EOF
+        ;;
+    link)
+        cat <<EOF
+
+  ${PROG} link [url] [text]
+
+  Emits an OSC 8 hyperlink and prints the correct click modifier for the
+  current context.
+
+  Defaults: url=https://example.com  text=CLICK ME
+
+    ${PROG} link
+    ${PROG} link https://github.com "my repo"
+
+  Modifiers differ by terminal. Ghostty uses Ctrl+click on Linux, and
+  Ctrl+Shift+click whenever mouse reporting or the alternate buffer is
+  active — which includes any tmux session with mouse on.
+EOF
+        ;;
+    delta)
+        cat <<EOF
+
+  ${PROG} delta [file]
+
+  Runs git blame through delta, strips the escape codes, and lists every
+  unique OSC 8 URL delta emitted. Defaults to the first tracked file.
+
+    ${PROG} delta
+    ${PROG} delta git/.gitconfig
+
+  Only file:// URLs means commit-hash linking is not firing. Fix per-repo:
+    git config delta.hyperlinks-commit-link-format \\
+      'https://github.com/USER/REPO/commit/{commit}'
+
+  Requires: delta, git, and a git repo.
+EOF
+        ;;
+    styles)
+        cat <<EOF
+
+  ${PROG} styles
+
+  Prints each SGR attribute with its escape code alongside. Anything that
+  renders as plain text is unsupported or being stripped in transit.
+
+  Note blink (ESC[5m) is ignored by most modern terminals on purpose.
+EOF
+        ;;
+    underlines)
+        cat <<EOF
+
+  ${PROG} underlines
+
+  Tests the styled-underline extension: single, double, curly, dotted and
+  dashed, plus underline color via SGR 58.
+
+  Requires 'usstyle' in tmux terminal-features. If all five look identical,
+  it is not getting through — and nvim LSP diagnostics and spell-check
+  squiggles will be flat underlines instead of colored curls.
+EOF
+        ;;
+    colors)
+        cat <<EOF
+
+  ${PROG} colors
+
+  Three blocks: the 16 base colors, the 216-color cube, and a 24-bit
+  gradient. A smooth gradient means truecolor works; visible banding means
+  something downgraded it to 256 colors.
+
+  Requires 'RGB' in tmux terminal-features. COLORTERM=truecolor also helps,
+  since some applications check that instead of querying the terminal.
+EOF
+        ;;
+    unicode)
+        cat <<EOF
+
+  ${PROG} unicode
+
+  Width and glyph coverage: box drawing, powerline separators, braille, CJK
+  (2 cells each), emoji, a ZWJ family sequence, combining marks and a nerd
+  font glyph.
+
+  Watch the | pipes — misalignment means the terminal and the application
+  disagree about a character's width. tmux 3.6 adds codepoint-widths to
+  correct specific cases.
+EOF
+        ;;
+    clip)
+        cat <<EOF
+
+  ${PROG} clip [text]
+
+  Writes text to the system clipboard via OSC 52. Defaults to a timestamped
+  string so you can tell a fresh write from a stale one.
+
+  Then paste (Ctrl+Shift+V) and compare. tmux relays OSC 52 only when
+  set-clipboard is on.
+EOF
+        ;;
+    title)
+        cat <<EOF
+
+  ${PROG} title [text]
+
+  Sets the window title via OSC 0. Inside tmux this sets the tmux window
+  name rather than the terminal title, unless allow-rename is off.
+EOF
+        ;;
+    cwd)
+        cat <<EOF
+
+  ${PROG} cwd
+
+  Reports the current directory via OSC 7. When supported, new tabs and
+  splits open in that directory instead of \$HOME.
+EOF
+        ;;
+    notify)
+        cat <<EOF
+
+  ${PROG} notify [title] [body]
+
+  Fires a desktop notification twice, once as OSC 9 (iTerm2 convention) and
+  once as OSC 777 (urxvt convention). Support varies; one, both or neither
+  may appear.
+
+  Inside tmux these go through DCS passthrough, so allow-passthrough must
+  be on or all.
+EOF
+        ;;
+    graphics)
+        cat <<EOF
+
+  ${PROG} graphics
+
+  Probes the kitty graphics protocol with a tiny 8x8 square, then sixel with
+  a short bar. The payloads are deliberately small because an unsupported
+  terminal prints them as raw text.
+
+  Inside tmux both require allow-passthrough on or all.
+EOF
+        ;;
+    cursor)
+        cat <<EOF
+
+  ${PROG} cursor
+
+  Steps through the six DECSCUSR shapes, pausing for Enter between each so
+  you can see them. Resets to steady block on exit.
+
+  Needs a real terminal — it reads from /dev/tty.
+EOF
+        ;;
+    keys)
+        cat <<EOF
+
+  ${PROG} keys
+
+  Prints the raw bytes and hex for each keypress. Quit with q.
+
+  The useful comparison: press Enter, then Ctrl+Enter. Plain xterm encoding
+  sends identical bytes for both. With CSI u (tmux extended-keys-format
+  csi-u) they get distinct sequences like ESC[13;5u, which is what lets
+  editors bind them separately.
+EOF
+        ;;
+    version) printf '\n  %s version — print version and exit\n' "$PROG" ;;
+    help) printf '\n  %s help [subcommand] — this text\n' "$PROG" ;;
+    *)
+        err "no help for '$1'"
+        note "run '$PROG help' for the list"
+        return 1
+        ;;
+    esac
+    printf '\n'
+}
+
+# ---------------------------------------------------------------------------
+# dispatch
+# ---------------------------------------------------------------------------
+
+main() {
+    [ $# -eq 0 ] && {
+        usage
+        exit 0
+    }
+    local sub="$1"
+    shift
+    case "$sub" in
+    all) cmd_all "$@" ;;
+    env | info) cmd_env "$@" ;;
+    link | links) cmd_link "$@" ;;
+    delta) cmd_delta "$@" ;;
+    styles | style | sgr) cmd_styles "$@" ;;
+    underlines | ul) cmd_underlines "$@" ;;
+    colors | color) cmd_colors "$@" ;;
+    unicode | uni) cmd_unicode "$@" ;;
+    clip | clipboard) cmd_clip "$@" ;;
+    title) cmd_title "$@" ;;
+    cwd) cmd_cwd "$@" ;;
+    notify) cmd_notify "$@" ;;
+    graphics | gfx) cmd_graphics "$@" ;;
+    cursor) cmd_cursor "$@" ;;
+    keys | key) cmd_keys "$@" ;;
+    help | -h | --help) cmd_help "$@" ;;
+    version | -V | --version) printf '%s %s\n' "$PROG" "$VERSION" ;;
+    *)
+        err "unknown subcommand '$sub'"
+        note "run '$PROG help' for the list"
+        exit 1
+        ;;
+    esac
+}
+
+main "$@"
