@@ -1,0 +1,17 @@
+version: 2
+
+# Actions are pinned to full commit SHAs rather than version tags. A tag is
+# mutable, and `publish` runs third-party actions in a job holding the signing
+# key -- so a moved tag is code execution next to the key that every installed
+# machine trusts.
+#
+# The cost of pinning is that patches no longer arrive on their own, which is
+# what this is for: Dependabot opens a PR when a pinned action moves, and the
+# SHA change is reviewed like any other.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore"
