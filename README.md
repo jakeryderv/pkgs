@@ -72,7 +72,10 @@ Asset:  name_1.2.0_arm64.deb  sha256:c418…
 `./scripts/fetch-releases.sh` downloads these into `vendor/` and verifies each
 against its pin. `--update` re-pins to whatever upstream currently serves,
 which is the only way a hash changes — mirroring `UPDATE_PINS=1` on
-`build-repo.sh`.
+`build-repo.sh`. It takes an optional package name, `--update <name>`, which
+the automation below relies on: re-pinning everything to bump one package
+would quietly accept a change in any of the others, which is precisely the
+tampering the pins refuse.
 
 The pins are the point. A GitHub release asset is mutable: a tag can be
 deleted and re-pushed, an asset replaced. An unpinned fetch therefore trusts
@@ -88,6 +91,34 @@ This is also how a second architecture arrives. Local packages are all
 `Architecture: all`, so `binary-amd64` and `binary-arm64` are currently
 identical; a fetched package can declare a real per-arch asset for each, and
 `dpkg-scanpackages` indexes them where they belong with no change here.
+
+### Releasing a fetched package
+
+Tag it upstream. That is the whole workflow — nothing here is edited by hand.
+
+`.github/workflows/autopin.yml` polls each declared repository daily. When a
+newer tag appears it takes the asset names from the release, re-pins the
+hashes, verifies build provenance, and opens a PR. Merging publishes.
+
+Provenance is checked with `gh attestation verify`, which proves the artifact
+was built by that repository's own release workflow rather than uploaded by
+someone who reached the repo. That is a different guarantee from the hash, and
+both are kept: the pin says these bytes have not moved since we looked, the
+attestation says who built them. A package whose upstream does not attest
+cannot be picked up automatically, which is intended.
+
+Polling rather than a dispatch from the tool repo, deliberately.
+`repository_dispatch` requires `contents: write` on this repository — there is
+no dispatch-only permission — so every tool repo would hold a token able to
+push here, and pushing here publishes under the signing key. Polling needs no
+token in any tool repo at all, at the cost of a latency nothing here is
+sensitive to.
+
+One wrinkle: GitHub does not start checks on a PR opened by
+`github-actions[bot]` without approval, so each autopin PR needs *Approve and
+run* before `verify` reports. That is not a safety gate — `publish` requires
+`verify` on `main` regardless — so merging blind cannot publish something
+broken; it would just leave `main` red.
 
 `fetch-releases.sh` prunes `vendor/` of anything no longer declared. Without
 that, retagging a package would leave its old `.deb` behind to be swept back
