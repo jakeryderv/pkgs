@@ -300,15 +300,27 @@ and `vars.SIGNER_UID` — so rotating locally without updating those means the
 next push silently re-signs with the *old* key. Not broken, since machines
 still trust it at that point, but quietly back on the key you meant to retire.
 
-The script reads the key and its passphrase from 1Password and pushes both,
-rather than pasting a private key into a browser form. Before it pushes
-anything it checks three things: that the key imports, that its fingerprint is
-in the keyring this repository ships — the same guard `build-repo.sh` applies,
-for the same reason — and that the passphrase actually unlocks the key. That
-last one otherwise surfaces as a failed publish, which is the worst time to
-learn it.
+The script reads the credentials from 1Password and pushes them, rather than
+pasting a private key into a browser form. Before pushing anything it checks:
 
-`--dry-run` runs the checks and changes nothing.
+- the key imports and yields a fingerprint
+- that fingerprint is in the keyring this repository ships — the same guard
+  `build-repo.sh` applies, for the same reason
+- the passphrase actually unlocks the key
+- if the Cloudflare credentials are in the vault, that the token is active and
+  can list `r2://pkgs` under the given account, which is what `publish.sh`
+  needs of it
+
+Each of those otherwise surfaces as a failed publish, which is the worst
+moment to learn any of them.
+
+The Cloudflare pair is optional — a token is displayed once at creation and
+cannot be read back out of GitHub, so it may not be in the vault. When absent
+the existing GitHub secrets are left alone rather than overwritten with
+nothing; when only one of the two is present, that is an error rather than a
+supported state.
+
+`--dry-run` runs every check and changes nothing.
 
 Step 2 is the load-bearing one and has no shortcut: a machine that has not
 upgraded its keyring before step 3 lands will start failing `apt update` and
