@@ -20,8 +20,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO="${REPO:-jakeryderv/pkgs}"
-OP_KEY_REF="${OP_KEY_REF:-op://Private/pkgs.jvs.sh/jvs-archive-signing-key.asc}"
-OP_PASS_REF="${OP_PASS_REF:-op://Private/pkgs.jvs.sh/password}"
+OP_KEY_REF="${OP_KEY_REF:-op://dev/pkgs.jvs.sh/jvs-archive-signing-key.asc}"
+OP_PASS_REF="${OP_PASS_REF:-op://dev/pkgs.jvs.sh/password}"
 SHIPPED_KEYRING="$ROOT/packages/jvs-archive-keyring/files/usr/share/keyrings/jvs-archive-keyring.gpg"
 
 DRY=0
