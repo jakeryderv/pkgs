@@ -48,8 +48,51 @@ packages/<name>/
 ```
 
 Anything with a real build should produce its `.deb` in its own repo, publish
-it to a GitHub Release, and land in `dist/` — the indexer does not care where
-a `.deb` came from.
+it to a GitHub Release, and declare a `release` file instead — the indexer
+does not care where a `.deb` came from.
+
+### release
+
+A package is either built here or fetched, never both. A fetched one replaces
+`manifest` and `files/` with a `release`:
+
+```
+packages/<name>/
+  release           where to fetch the .deb, and its pinned hashes
+  smoke             optional; same convention as a local package
+```
+
+```
+Repo:   owner/name
+Tag:    v1.2.0
+Asset:  name_1.2.0_amd64.deb  sha256:9f2a…
+Asset:  name_1.2.0_arm64.deb  sha256:c418…
+```
+
+`./scripts/fetch-releases.sh` downloads these into `vendor/` and verifies each
+against its pin. `--update` re-pins to whatever upstream currently serves,
+which is the only way a hash changes — mirroring `UPDATE_PINS=1` on
+`build-repo.sh`.
+
+The pins are the point. A GitHub release asset is mutable: a tag can be
+deleted and re-pushed, an asset replaced. An unpinned fetch therefore trusts
+whatever the server returns on the day CI happens to run, which is the same
+problem `install.sh`'s keyring pin exists to solve and gets the same
+fail-closed answer.
+
+They also buy back reproducibility. A local package gets byte-stability from
+`SOURCE_DATE_EPOCH`; a fetched one is never rebuilt, so pinning its bytes is
+what keeps `publish.sh`'s immutability guard meaningful.
+
+This is also how a second architecture arrives. Local packages are all
+`Architecture: all`, so `binary-amd64` and `binary-arm64` are currently
+identical; a fetched package can declare a real per-arch asset for each, and
+`dpkg-scanpackages` indexes them where they belong with no change here.
+
+`fetch-releases.sh` prunes `vendor/` of anything no longer declared. Without
+that, retagging a package would leave its old `.deb` behind to be swept back
+into the pool — the stale-artifact failure `build-deb.sh` wipes `dist/` to
+prevent.
 
 ### smoke
 
@@ -74,19 +117,28 @@ that reason.
 ## Building
 
 ```
-./scripts/build-deb.sh       # packages/ -> dist/
-./scripts/build-repo.sh      # dist/ -> repo/, signed
+./scripts/build-deb.sh       # packages/ -> dist/          (local, offline)
+./scripts/fetch-releases.sh  # GitHub Releases -> vendor/  (network, pinned)
+./scripts/build-repo.sh      # dist/ + vendor/ -> repo/, signed
 ./scripts/test-repo.sh       # verify in Debian + Ubuntu containers
 ./scripts/test-rotation.sh   # verify a key rotation survives, in containers
 ./scripts/publish.sh         # repo/ -> R2
 ./scripts/update-keyring.sh  # regenerate the keyring the keyring package ships
 ```
 
-Two guards will stop you, both deliberately:
+The first two are independent and can run in either order. `build-deb.sh`
+never touches the network — a GitHub outage should not be able to break a
+build of packages that are entirely local — and `fetch-releases.sh` is
+offline too once `vendor/` is warm, since a cached asset matching its pin is
+not re-downloaded.
+
+Three guards will stop you, all deliberately:
 
 - `build-repo.sh` refuses to run if the key pins in `scripts/install.sh` do
   not match the signing key. Pass `UPDATE_PINS=1` when a key change is
   intentional.
+- `fetch-releases.sh` refuses to accept an asset whose hash differs from its
+  pin. Pass `--update` when the change is intentional.
 - `publish.sh` refuses to upload a `pool/` object whose content differs from
   what is already in the bucket. See below.
 

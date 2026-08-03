@@ -63,6 +63,7 @@ jobs:
           # consistent -- the same move a real rotation makes, not a bypass.
           ./scripts/update-keyring.sh ci@example.invalid
           ./scripts/build-deb.sh
+          ./scripts/fetch-releases.sh
           ./scripts/build-repo.sh
 
       - name: Verify install in Debian and Ubuntu
@@ -101,7 +102,8 @@ jobs:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           ./scripts/build-deb.sh
-          ./scripts/build-repo.sh   # fails if install.sh pins drift from the key
+          ./scripts/fetch-releases.sh   # fails closed if an asset drifts from its pin
+          ./scripts/build-repo.sh       # fails if install.sh pins drift from the key
 
       - name: Publish to R2
         env:

@@ -10,6 +10,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST="$ROOT/dist"
+VENDOR="$ROOT/vendor"
 REPO="$ROOT/repo"
 SIGNER="${SIGNER:-pkgs@jvs.sh}"
 ARCHES="${ARCHES:-amd64 arm64}"
@@ -17,19 +18,48 @@ SUITE=stable
 COMPONENT=main
 export GNUPGHOME="${GNUPGHOME:-$ROOT/gnupg}"
 
-compgen -G "$DIST/*.deb" >/dev/null || { echo "ERROR: no .deb files in $DIST — run build-deb.sh first" >&2; exit 1; }
+compgen -G "$DIST/*.deb" >/dev/null || compgen -G "$VENDOR/*.deb" >/dev/null || {
+  echo "ERROR: no .deb files in $DIST or $VENDOR — run build-deb.sh (and" >&2
+  echo "fetch-releases.sh, if any package declares a release) first" >&2
+  exit 1
+}
 
 rm -rf "$REPO"
 mkdir -p "$REPO/dists/$SUITE/$COMPONENT"
 
 # ---- pool ---------------------------------------------------------------
 # Debian convention: pool/<component>/<first letter of source>/<source>/
-for deb in "$DIST"/*.deb; do
+#
+# Two sources, and the distinction stops here: dist/ is what build-deb.sh
+# built from packages/, vendor/ is what fetch-releases.sh pulled from GitHub
+# Releases. The index does not care which is which.
+shopt -s nullglob
+for deb in "$DIST"/*.deb "$VENDOR"/*.deb; do
   name="$(dpkg-deb -f "$deb" Package)"
   letter="${name:0:1}"
   dest="$REPO/pool/$COMPONENT/$letter/$name"
   mkdir -p "$dest"
+  # Same filename from both sources would mean one silently winning. It
+  # cannot happen by construction -- a package is built or fetched, never
+  # both -- so if it does, something is wrong enough to stop for.
+  [ -e "$dest/$(basename "$deb")" ] && {
+    echo "ERROR: $(basename "$deb") appears in both dist/ and vendor/" >&2
+    exit 1
+  }
   cp "$deb" "$dest/"
+done
+
+# Every package that declares a release must actually be present. Otherwise a
+# forgotten fetch-releases.sh silently publishes a repository missing one of
+# its packages, and every other check stays green.
+for def in "$ROOT"/packages/*/; do
+  [ -f "$def/release" ] || continue
+  name="$(basename "$def")"
+  [ -d "$REPO/pool/$COMPONENT/${name:0:1}/$name" ] || {
+    echo "ERROR: $name declares a release but nothing in vendor/ provides it." >&2
+    echo "Run ./scripts/fetch-releases.sh" >&2
+    exit 1
+  }
 done
 
 # ---- per-architecture Packages indexes ----------------------------------

@@ -7,8 +7,12 @@
 #   scripts/        optional maintainer scripts (postinst, prerm, ...)
 #
 # This is for simple, self-contained packages. Anything with a real build
-# (Go, Rust, C) should produce its .deb in its own repo and land in dist/
-# via scripts/fetch-releases.sh instead.
+# (Go, Rust, C) should produce its .deb in its own repo, attach it to a GitHub
+# Release, and declare a `release` file instead of a manifest -- those are
+# fetched into vendor/ by scripts/fetch-releases.sh and skipped here.
+#
+# Nothing in this script touches the network, deliberately. A GitHub outage
+# should not be able to break a build of packages that are entirely local.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,8 +26,22 @@ rm -rf "$BUILD" "$DIST"; mkdir -p "$BUILD" "$DIST"
 
 shopt -s nullglob
 found=0
+fetched=0
 for def in "$ROOT"/packages/*/; do
   name="$(basename "$def")"
+
+  # A package is either built here or fetched, never both. Checked before the
+  # manifest so a release file is not reported as a missing manifest.
+  if [ -f "$def/release" ]; then
+    [ -f "$def/manifest" ] && {
+      echo "ERROR $name: has both a manifest and a release; it must be one or the other" >&2
+      exit 1
+    }
+    echo "  fetch  $name (see vendor/)"
+    fetched=$((fetched+1))
+    continue
+  fi
+
   [ -f "$def/manifest" ] || { echo "skip $name: no manifest" >&2; continue; }
 
   version="$(awk -F': *' '/^Version:/{print $2; exit}' "$def/manifest")"
@@ -79,5 +97,11 @@ for def in "$ROOT"/packages/*/; do
   found=$((found+1))
 done
 
-[ "$found" -gt 0 ] || { echo "ERROR: no packages built" >&2; exit 1; }
-echo "$found package(s) in $DIST"
+# A tree of nothing but fetched packages is legitimate, so this is only an
+# error when there was nothing to do at all.
+[ "$found" -gt 0 ] || [ "$fetched" -gt 0 ] || { echo "ERROR: no packages found" >&2; exit 1; }
+if [ "$fetched" -gt 0 ]; then
+  echo "$found package(s) in $DIST; $fetched fetched into vendor/ instead"
+else
+  echo "$found package(s) in $DIST"
+fi
