@@ -173,6 +173,49 @@ One consequence worth knowing: "rebuild and republish without changing
 anything" is a no-op, not an error — but it is also not a way to fix a bad
 build. Bump the version.
 
+### Only current versions are installable
+
+The index carries one version per package — the one currently declared.
+`apt install termtest=1.1.0` therefore stops working once 1.2.0 ships, and
+apt cannot downgrade. Old `.deb` files stay in the bucket, because
+`publish.sh` never deletes, but nothing references them.
+
+This is a decision, not an accident. It is the same rule as above expressed
+in the index: a bad release is fixed by rolling forward, not by asking anyone
+to pin the previous one.
+
+**The cost is that rollback is not available.** If a release is bad, shipping
+a new version is the only remedy. That is fine for a smoke package and a
+terminal utility; it is worth revisiting the first time something here is
+load-bearing for machines you do not own.
+
+Retention, if you ever want it, is **per package** and only worth expressing
+for fetched ones. A `release` file may declare more than one version, and
+assets bind to the `Tag` block above them:
+
+```
+Repo:   owner/name
+
+Tag:    v1.2.0
+Asset:  name_1.2.0_amd64.deb  sha256:9f2a…
+
+Tag:    v1.1.0
+Asset:  name_1.1.0_amd64.deb  sha256:c418…
+```
+
+No "current" marker is needed — apt installs the highest version it can see,
+so the file is simply the list of what should be installable. Nothing enforces
+a count: the file is the policy, and which versions stay reachable is a
+decision worth making by hand.
+
+Locally-built packages cannot do this, deliberately. Retaining one would mean
+keeping dead `files/` trees around or building from git history, and build
+output must depend on package contents alone.
+
+**Never retain `jvs-archive-keyring`.** An older keyring trusts fewer keys, so
+letting a machine install one after a rotation is a way to break something
+that was working. Retention is not neutral for that package; it is a hazard.
+
 ## Why install.sh pins the artifact
 
 `curl | sh` normally means trusting whatever the server returns. This script
