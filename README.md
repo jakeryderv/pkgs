@@ -194,6 +194,15 @@ implementation: `make build`, `make repo`, `make verify`, `make lint`,
 `make publish`, `make sync`, `make cache-rules`, `make clean`. Scripts hold
 all behavior and run identically without it.
 
+The build targets do not require a Debian host. When the machine lacks
+`dpkg-deb` — macOS, Windows — `make build` re-enters itself inside a
+toolchain container (`docker/toolchain/`) carrying the packaging tools, with
+the same scripts unchanged and output still landing under `PKGS_OUT`.
+`PKGS_CONTAINED=1` forces the container on any host, which is also the way
+to get a bit-identical build environment everywhere. Verification always
+runs on the host, since it drives docker itself; trust operations never
+enter a container at all.
+
 The first two are independent and can run in either order. `build-deb.sh`
 never touches the network — a GitHub outage should not be able to break a
 build of packages that are entirely local — and `fetch-releases.sh` is

@@ -97,7 +97,14 @@ for def in "$ROOT"/packages/*/; do
 
   # --root-owner-group so files install as root:root rather than inheriting
   # the uid of whoever ran the build.
-  dpkg-deb --root-owner-group --build "$stage" "$DIST/${name}_${version}_${arch}.deb" >/dev/null
+  #
+  # -Zzstd pins the compressor. dpkg-deb's default differs by distro -- zstd
+  # on Ubuntu-family, xz on Debian -- so without this the same version builds
+  # different bytes depending on where it was built, and the toolchain
+  # container disagrees with CI. Zstd specifically because it is what every
+  # object already in the bucket uses; changing it would trip publish.sh's
+  # immutability guard on every already-published version.
+  dpkg-deb --root-owner-group -Zzstd --build "$stage" "$DIST/${name}_${version}_${arch}.deb" >/dev/null
   echo "  built  ${name}_${version}_${arch}.deb"
   found=$((found+1))
 done
