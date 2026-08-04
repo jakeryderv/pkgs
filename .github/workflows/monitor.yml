@@ -1,0 +1,66 @@
+name: monitor
+
+# Checks the things that can break without anyone pushing a commit.
+#
+# Everything else here runs on push, which means it only ever inspects the
+# repository at the moment it changes. Both failures this repository has
+# actually taken -- a cache rule that started caching error responses, and a
+# bootstrap file missing from the upload list -- broke the live site while
+# every push-triggered check stayed green, because no push was involved.
+
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+# Queued rather than cancelled: a run interrupted halfway tells you nothing,
+# and these are cheap enough that overlapping runs are not worth optimising.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Publishing successfully is not the same as being installable. This is the
+  # only check that exercises what a user actually does, against what is
+  # actually served, with nothing from this repository involved.
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install from pkgs.jvs.sh, as a user would
+        run: |
+          docker run --rm debian:stable bash -c '
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq curl ca-certificates >/dev/null
+            curl -fsSL https://pkgs.jvs.sh/install.sh | sh >/dev/null
+            apt-get install -y -qq hello-jvs termtest >/dev/null
+            hello-jvs
+            termtest version
+          '
+
+  # Cache rules are applied out-of-band, so nothing else would notice them
+  # drifting. `/dists/*` cached even briefly is a hash mismatch and apt exits
+  # 100; a `/pool/*` object cached with the wrong TTL is wrong for a year.
+  #
+  # Read-only token: this reports drift, it never fixes it. Applying is a
+  # deliberate local act -- see scripts/apply-cache-rules.sh --apply.
+  cache-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install cf
+        run: npm install -g cf@0.6.0
+      - name: Report drift against cloudflare/cache-rules.json
+        env:
+          CLOUDFLARE_CACHE_TOKEN: ${{ secrets.CLOUDFLARE_CACHE_RO_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_CACHE_TOKEN" ]; then
+            echo "::error::CLOUDFLARE_CACHE_RO_TOKEN is not set"
+            exit 1
+          fi
+          ./scripts/apply-cache-rules.sh
