@@ -43,17 +43,16 @@ jobs:
       - name: Lint workflows
         run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
 
-      # Keyed on the release declarations, so the cache is invalid exactly when
-      # a pin changes -- the pins make a stale hit impossible to act on anyway,
-      # since fetch-releases.sh re-verifies every file it finds.
+      # No vendor/ cache, deliberately. There was one, keyed on the release
+      # declarations; it existed to avoid re-downloading a single 7 kB .deb,
+      # which the cache service's own save/restore round trip plausibly costs
+      # more than. It was added on the speculation that there would eventually
+      # be several large packages, and in the meantime it produced
+      # major-version bump PRs to review.
       #
-      # Barely earns its keep at one small package; it is here for when there
-      # are several, or large ones.
-      - name: Cache fetched release artifacts
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: vendor
-          key: vendor-${{ hashFiles('packages/*/release') }}
+      # Worth re-adding when that speculation comes true -- it is five lines,
+      # and the pins make a stale hit harmless since fetch-releases.sh
+      # re-verifies every file it finds.
 
       # arm64 packages are indexed but, without this, never installed by
       # anything -- so the second architecture ships untested. Emulated, which
