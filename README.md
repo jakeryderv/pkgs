@@ -133,6 +133,14 @@ required `verify` that never starts — and auto-merge waits with it. Closing
 an autopin PR without merging is still how a version is skipped; auto-merge
 only ever fires on a green `verify`.
 
+Both PATs live in the `pkgs` 1Password Environment and are placed by
+`sync-secrets.sh`, like every other credential: `AUTOPIN_TOKEN` becomes a
+secret on this repository, and the dispatch token is pushed to every repo a
+`release` file declares — so a new fetched package gets it by being declared,
+not by being remembered. Each is verified before being pushed anywhere: the
+autopin token that it can actually push here, the dispatch token that it can
+see the workflow it exists to trigger.
+
 `fetch-releases.sh` prunes `vendor/` of anything no longer declared. Without
 that, retagging a package would leave its old `.deb` behind to be swept back
 into the pool — the stale-artifact failure `build-deb.sh` wipes `dist/` to

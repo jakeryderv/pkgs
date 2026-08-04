@@ -177,10 +177,63 @@ if [ "$CF" -eq 1 ]; then
   echo "  cloudflare token can reach r2://$BUCKET"
 fi
 
+# ---- GitHub tokens --------------------------------------------------------
+# Same channel as the Cloudflare pair: the pkgs 1Password Environment,
+# arriving via the mounted .env. Absent is not an error for the same reason --
+# a PAT is displayed once at creation, so leave a working GitHub secret alone
+# rather than overwriting it with nothing. Unlike the Cloudflare pair the two
+# are independent: either can be synced without the other.
+AUTOPIN=0
+if [ -n "${AUTOPIN_TOKEN:-}" ]; then
+  # The check autopin actually depends on: the token can see the repository
+  # and push to it. Pull-request write has no read-only probe, so a scope
+  # mistake there still only surfaces when autopin next opens a PR.
+  if [ "$(GH_TOKEN="$AUTOPIN_TOKEN" gh api "repos/$REPO" --jq '.permissions.push' 2>/dev/null || true)" != "true" ]; then
+    echo "ERROR: AUTOPIN_TOKEN cannot push to $REPO." >&2
+    echo "It needs a fine-grained PAT with Contents and Pull requests" >&2
+    echo "read/write, scoped to $REPO only." >&2
+    exit 1
+  fi
+  AUTOPIN=1
+  echo "  autopin token can push to $REPO"
+else
+  echo "  no AUTOPIN_TOKEN in the environment, leaving its GitHub secret alone"
+fi
+
+DISPATCH=0
+TOOL_REPOS=""
+if [ -n "${PKGS_AUTOPIN_DISPATCH:-}" ]; then
+  # Probe the exact surface the token exists to reach: the autopin workflow
+  # on this repository. Seeing it requires Actions access; nothing else does.
+  if ! GH_TOKEN="$PKGS_AUTOPIN_DISPATCH" gh api "repos/$REPO/actions/workflows/autopin.yml" --jq .id >/dev/null 2>&1; then
+    echo "ERROR: PKGS_AUTOPIN_DISPATCH cannot see the autopin workflow on $REPO." >&2
+    echo "It needs a fine-grained PAT with Actions read/write, scoped to $REPO only." >&2
+    exit 1
+  fi
+  # The release files already name every tool repo, so sync from them: a new
+  # fetched package gets the dispatch secret by being declared, not by being
+  # remembered.
+  TOOL_REPOS="$(for rel in "$ROOT"/packages/*/release; do
+      [ -f "$rel" ] || continue
+      awk '$1=="Repo:"{print $2; exit}' "$rel"
+    done | sort -u)"
+  if [ -z "$TOOL_REPOS" ]; then
+    echo "  no package declares a release, nowhere to put the dispatch token"
+  else
+    DISPATCH=1
+    echo "  dispatch token can reach the autopin workflow"
+  fi
+else
+  echo "  no PKGS_AUTOPIN_DISPATCH in the environment, leaving tool repos alone"
+fi
+
 if [ "$DRY" -eq 1 ]; then
   echo
   echo "dry run: nothing pushed."
-  echo "  would set: GPG_PRIVATE_KEY, GPG_PASSPHRASE$( [ "$CF" -eq 1 ] && printf ', CLOUDFLARE_API_TOKEN' )$( [ -n "${CLOUDFLARE_CACHE_RO_TOKEN:-}" ] && printf ', CLOUDFLARE_CACHE_RO_TOKEN' )"
+  echo "  would set: GPG_PRIVATE_KEY, GPG_PASSPHRASE$( [ "$CF" -eq 1 ] && printf ', CLOUDFLARE_API_TOKEN' )$( [ -n "${CLOUDFLARE_CACHE_RO_TOKEN:-}" ] && printf ', CLOUDFLARE_CACHE_RO_TOKEN' )$( [ "$AUTOPIN" -eq 1 ] && printf ', AUTOPIN_TOKEN' )"
+  if [ "$DISPATCH" -eq 1 ]; then
+    echo "  would set PKGS_AUTOPIN_DISPATCH in:$(printf ' %s' $TOOL_REPOS)"
+  fi
   exit 0
 fi
 
@@ -197,6 +250,21 @@ fi
 if [ -n "${CLOUDFLARE_CACHE_RO_TOKEN:-}" ]; then
   printf '%s' "$CLOUDFLARE_CACHE_RO_TOKEN" | gh secret set CLOUDFLARE_CACHE_RO_TOKEN --repo "$REPO"
   echo "  CLOUDFLARE_CACHE_RO_TOKEN pushed"
+fi
+
+if [ "$AUTOPIN" -eq 1 ]; then
+  printf '%s' "$AUTOPIN_TOKEN" | gh secret set AUTOPIN_TOKEN --repo "$REPO"
+  echo "  AUTOPIN_TOKEN pushed"
+fi
+
+# One dispatch token, placed in every repo a release file declares. Pushed by
+# the logged-in gh account, not by the token itself -- it cannot write
+# secrets anywhere, which is the point of its scope.
+if [ "$DISPATCH" -eq 1 ]; then
+  for toolrepo in $TOOL_REPOS; do
+    printf '%s' "$PKGS_AUTOPIN_DISPATCH" | gh secret set PKGS_AUTOPIN_DISPATCH --repo "$toolrepo"
+    echo "  PKGS_AUTOPIN_DISPATCH pushed to $toolrepo"
+  done
 fi
 
 # CI signs with vars.SIGNER_UID, defaulting to pkgs@jvs.sh. During a rotation
