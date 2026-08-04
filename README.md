@@ -383,6 +383,11 @@ the container tests because it takes seconds and they take minutes.
 `GPG_PASSPHRASE`, and `CLOUDFLARE_API_TOKEN`. It
 fails rather than publishing an unsigned repository if the key is missing.
 
+Nothing in the pipeline installs a CLI any more. R2 object operations live on
+the ordinary v4 API and take the same bearer token as everything else, so
+`publish.sh` uses `curl` — no wrangler, no `npx` download on every publish, and
+no version to pin.
+
 `GPG_PASSPHRASE` is not optional: a runner has no gpg-agent and no tty, so
 nothing can prompt for it. `build-repo.sh` feeds it through loopback
 pinentry when set.
