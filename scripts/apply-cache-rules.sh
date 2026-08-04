@@ -20,7 +20,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RULES_FILE="$ROOT/cloudflare/cache-rules.json"
-ZONE="${ZONE:-jvs.sh}"
+# The zone ID, not the name. Resolving a name means listing zones, which needs
+# zone:read -- a permission this token deliberately does not have. Passing the
+# id keeps the token scoped to cache settings and nothing else.
+ZONE="${ZONE:-b7b9fa5ebf569a9d932b848c07ad4024}"   # jvs.sh
 PHASE=http_request_cache_settings
 OP_CF_CACHE_TOKEN_REF="${OP_CF_CACHE_TOKEN_REF:-op://dev/pkgs.jvs.sh/cloudflare-cache-token}"
 
@@ -58,12 +61,22 @@ export CLOUDFLARE_API_TOKEN="$TOKEN"
 
 # Only the fields we actually author. The API adds id, version, ref and
 # last_updated to every rule, none of which belong in a diff against a file
-# that cannot know them. Order is preserved because rule order is evaluation
-# order -- two identical sets in a different sequence are not the same policy.
+# that cannot know them.
+#
+# Compared with `jq -S`, which sorts object keys but NOT array elements. That
+# distinction is the whole point: the API returns object keys in a different
+# order than the file writes them, which is not a difference at all -- while
+# rule *order* is evaluation order, so a reordered array is a real change and
+# must still register as drift.
 NORMALISE='.rules | [ .[]? | {description, expression, action, action_parameters} ]'
 
-ruleset_id="$(cf rulesets list -z "$ZONE" 2>/dev/null \
-  | jq -r --arg p "$PHASE" '.[]? | select(.phase == $p and .kind == "zone") | .id' | head -1)"
+listing="$(cf rulesets list -z "$ZONE" 2>&1)" || {
+  echo "ERROR: could not list rulesets for zone $ZONE" >&2
+  printf '%s\n' "$listing" | head -10 >&2
+  exit 1
+}
+ruleset_id="$(printf '%s' "$listing" \
+  | jq -r --arg p "$PHASE" '.[]? | select(.phase == $p and .kind == "zone") | .id' 2>/dev/null | head -1)"
 
 if [ -z "$ruleset_id" ]; then
   echo "no $PHASE ruleset on $ZONE yet"
@@ -74,8 +87,13 @@ if [ -z "$ruleset_id" ]; then
   exit 0
 fi
 
-live="$(cf rulesets get "$ruleset_id" -z "$ZONE" 2>/dev/null | jq "$NORMALISE")"
-want="$(jq "$NORMALISE" "$RULES_FILE")"
+current="$(cf rulesets get "$ruleset_id" -z "$ZONE" 2>&1)" || {
+  echo "ERROR: could not read ruleset $ruleset_id" >&2
+  printf '%s\n' "$current" | head -10 >&2
+  exit 1
+}
+live="$(printf '%s' "$current" | jq -S "$NORMALISE")"
+want="$(jq -S "$NORMALISE" "$RULES_FILE")"
 
 if [ "$live" = "$want" ]; then
   echo "cache rules match $RULES_FILE ($(jq 'length' <<< "$want") rule(s), ruleset $ruleset_id)"
