@@ -11,7 +11,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPO="$ROOT/repo"
+# Shared output root -- see build-deb.sh for why this is outside the tree.
+OUT="${PKGS_OUT:-${XDG_CACHE_HOME:-$HOME/.cache}/pkgs-jvs}"
+REPO="$OUT/repo"
 PORT="${PORT:-8899}"
 IMAGES="${IMAGES:-debian:stable ubuntu:24.04}"
 
@@ -21,7 +23,7 @@ IMAGES="${IMAGES:-debian:stable ubuntu:24.04}"
 # never had anything installed from it.
 ARCHES="${TEST_ARCHES:-amd64}"
 
-[ -d "$REPO" ] || { echo "ERROR: no repo/ — run build-repo.sh first" >&2; exit 1; }
+[ -d "$REPO" ] || { echo "ERROR: no repo at $REPO — run build-repo.sh first" >&2; exit 1; }
 
 # Install every package the index advertises for that architecture, not just
 # the smoke package -- a package built and published but never installed can be
@@ -36,10 +38,9 @@ pkgs_for() { # arch
   awk '/^Package:/{print $2}' "$idx" | sort -u | tr '\n' ' '
 }
 
-# Decoy key for the negative test, in its own keyring so it can never be
-# confused with the real signing key.
-DECOY="$ROOT/.decoy-gnupg"
-rm -rf "$DECOY"; mkdir -p "$DECOY"; chmod 700 "$DECOY"
+# Decoy key for the negative test, in its own throwaway keyring so it can
+# never be confused with the real signing key.
+DECOY="$(mktemp -d)"
 GNUPGHOME="$DECOY" gpg --batch --quiet --generate-key /dev/stdin <<'EOF'
 %no-protection
 Key-Type: RSA

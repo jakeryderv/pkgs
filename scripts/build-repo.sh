@@ -4,19 +4,21 @@
 # Env:
 #   SIGNER      uid of the signing key            (default: contact@jvs.sh)
 #   ARCHES      space-separated list              (default: "amd64 arm64")
-#   GNUPGHOME   keyring to sign from              (default: gnupg/ in repo root)
+#   GNUPGHOME   keyring to sign from              (default: gnupg/ under PKGS_OUT)
 #   UPDATE_PINS set to 1 to rewrite the key pins in scripts/install.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DIST="$ROOT/dist"
-VENDOR="$ROOT/vendor"
-REPO="$ROOT/repo"
+# Shared output root -- see build-deb.sh for why this is outside the tree.
+OUT="${PKGS_OUT:-${XDG_CACHE_HOME:-$HOME/.cache}/pkgs-jvs}"
+DIST="$OUT/dist"
+VENDOR="$OUT/vendor"
+REPO="$OUT/repo"
 SIGNER="${SIGNER:-pkgs@jvs.sh}"
 ARCHES="${ARCHES:-amd64 arm64}"
 SUITE=stable
 COMPONENT=main
-export GNUPGHOME="${GNUPGHOME:-$ROOT/gnupg}"
+export GNUPGHOME="${GNUPGHOME:-$OUT/gnupg}"
 
 compgen -G "$DIST/*.deb" >/dev/null || compgen -G "$VENDOR/*.deb" >/dev/null || {
   echo "ERROR: no .deb files in $DIST or $VENDOR — run build-deb.sh (and" >&2
@@ -78,6 +80,7 @@ done
 # ---- Release ------------------------------------------------------------
 # Written to a temp path first: apt-ftparchive hashes every file in the
 # directory it is pointed at, and would otherwise hash a stale Release.
+release_tmp="$(mktemp)"
 apt-ftparchive \
   -o APT::FTPArchive::Release::Origin="jvs.sh" \
   -o APT::FTPArchive::Release::Label="jvs.sh" \
@@ -86,8 +89,8 @@ apt-ftparchive \
   -o APT::FTPArchive::Release::Architectures="$ARCHES" \
   -o APT::FTPArchive::Release::Components="$COMPONENT" \
   -o APT::FTPArchive::Release::Description="jvs.sh package repository" \
-  release "dists/$SUITE" > "$ROOT/.Release.tmp"
-mv "$ROOT/.Release.tmp" "dists/$SUITE/Release"
+  release "dists/$SUITE" > "$release_tmp"
+mv "$release_tmp" "dists/$SUITE/Release"
 
 # ---- signatures ---------------------------------------------------------
 # A real signing key has a passphrase. Interactively gpg-agent supplies it;

@@ -37,7 +37,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VENDOR="$ROOT/vendor"
+# Shared output root -- see build-deb.sh for why this is outside the tree.
+OUT="${PKGS_OUT:-${XDG_CACHE_HOME:-$HOME/.cache}/pkgs-jvs}"
+VENDOR="$OUT/vendor"
 
 UPDATE=0
 ONLY=""
