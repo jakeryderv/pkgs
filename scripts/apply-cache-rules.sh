@@ -38,16 +38,23 @@ command -v jq >/dev/null || { echo "ERROR: jq is required" >&2; exit 1; }
 # A token rather than the OAuth login: `cf auth login` grants zone:read but not
 # the ruleset permissions this needs, and a scoped token is the right shape for
 # something that edits cache behaviour anyway.
-if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
-  command -v op >/dev/null || { echo "ERROR: set CLOUDFLARE_API_TOKEN or install the 1Password CLI" >&2; exit 1; }
-  CLOUDFLARE_API_TOKEN="$(op read "$OP_CF_CACHE_TOKEN_REF" 2>/dev/null || true)"
-  [ -n "$CLOUDFLARE_API_TOKEN" ] || {
-    echo "ERROR: no token at $OP_CF_CACHE_TOKEN_REF, and CLOUDFLARE_API_TOKEN is unset." >&2
+#
+# Deliberately CLOUDFLARE_CACHE_TOKEN and never CLOUDFLARE_API_TOKEN. The
+# latter is the name wrangler and cf read by default, so it holds the R2
+# publish token -- which has no zone access. Picking it up here would fail with
+# a 403 that looks like a permissions bug rather than the wrong token.
+TOKEN="${CLOUDFLARE_CACHE_TOKEN:-}"
+if [ -z "$TOKEN" ]; then
+  command -v op >/dev/null || { echo "ERROR: set CLOUDFLARE_CACHE_TOKEN or install the 1Password CLI" >&2; exit 1; }
+  TOKEN="$(op read "$OP_CF_CACHE_TOKEN_REF" 2>/dev/null || true)"
+  [ -n "$TOKEN" ] || {
+    echo "ERROR: no token at $OP_CF_CACHE_TOKEN_REF, and CLOUDFLARE_CACHE_TOKEN is unset." >&2
     echo "It needs Zone -> Cache Rules -> Edit on $ZONE." >&2
     exit 1
   }
 fi
-export CLOUDFLARE_API_TOKEN
+# cf reads this name; the value is the cache token, not the publish one.
+export CLOUDFLARE_API_TOKEN="$TOKEN"
 
 # Only the fields we actually author. The API adds id, version, ref and
 # last_updated to every rule, none of which belong in a diff against a file

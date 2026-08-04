@@ -3,4 +3,9 @@ build/
 repo/
 vendor/
 gnupg/
+
+# 1Password Environments mounts this as a FIFO, which git will not track.
+# Listed anyway: if the mount is absent and something writes a real file at
+# this path, it becomes committable -- in a public repo.
+.env
 *.deb
