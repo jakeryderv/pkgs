@@ -1,0 +1,64 @@
+# The verification matrix as a topology: one service serving the built repo,
+# one one-shot client per distro x architecture installing from it, and a
+# negative client proving apt rejects a wrong key. The clients are
+# independent, so compose runs them in parallel; scripts/test-repo.sh owns
+# orchestration and pass/fail, and exports every ${VAR} used here -- this
+# file is not meant to be `docker compose up`ed by hand.
+#
+# arm64 services sit behind a profile because they need binfmt emulation a
+# developer machine may not have; CI sets up QEMU and enables the profile.
+
+x-client: &client
+  depends_on:
+    repo:
+      condition: service_healthy
+  volumes:
+    - ${VERIFY_REPO}:/srv/repo:ro
+    - ${VERIFY_PACKAGES}:/srv/packages:ro
+    - ${VERIFY_CHECK}:/check.sh:ro
+  command: bash /check.sh
+
+services:
+  repo:
+    image: busybox
+    command: httpd -f -p 80 -h /srv/repo
+    volumes:
+      - ${VERIFY_REPO}:/srv/repo:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/dists/stable/Release"]
+      interval: 1s
+      retries: 30
+
+  debian-amd64:
+    <<: *client
+    image: debian:stable
+    platform: linux/amd64
+    environment: { ARCH: amd64, KEYRING: jvs-archive-keyring.gpg, EXPECT: ok, PKGS: "${PKGS_AMD64}" }
+
+  ubuntu-amd64:
+    <<: *client
+    image: ubuntu:24.04
+    platform: linux/amd64
+    environment: { ARCH: amd64, KEYRING: jvs-archive-keyring.gpg, EXPECT: ok, PKGS: "${PKGS_AMD64}" }
+
+  debian-arm64:
+    <<: *client
+    profiles: [arm64]
+    image: debian:stable
+    platform: linux/arm64
+    environment: { ARCH: arm64, KEYRING: jvs-archive-keyring.gpg, EXPECT: ok, PKGS: "${PKGS_ARM64}" }
+
+  ubuntu-arm64:
+    <<: *client
+    profiles: [arm64]
+    image: ubuntu:24.04
+    platform: linux/arm64
+    environment: { ARCH: arm64, KEYRING: jvs-archive-keyring.gpg, EXPECT: ok, PKGS: "${PKGS_ARM64}" }
+
+  # One negative client is enough: it proves apt verifies signatures at all,
+  # which is not an architecture-specific property.
+  wrong-key:
+    <<: *client
+    image: debian:stable
+    platform: linux/amd64
+    environment: { ARCH: amd64, KEYRING: .wrong-keyring.gpg, EXPECT: reject, PKGS: "" }

@@ -451,6 +451,9 @@ To publish: edit `packages/`, bump the version, push to `main`.
 
 ## Testing without touching production
 
-Everything except `publish.sh` is local. `test-repo.sh` serves `repo/` over
-127.0.0.1 and installs from containers, so the full chain can be verified
-without publishing.
+Everything except `publish.sh` is local. `test-repo.sh` runs the matrix in
+`docker/verify/compose.yaml`: a service serving the built repo over the
+compose network, one client per distro × architecture installing from it in
+parallel, and a negative client proving apt rejects a wrong key. The full
+chain can be verified without publishing, and a failing client reports its
+own log rather than an interleaved one.

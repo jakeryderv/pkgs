@@ -62,7 +62,7 @@ test-rotation:
 
 ## lint: exactly what CI lints -- shell first because it takes seconds
 lint:
-	shellcheck -S warning scripts/*.sh packages/*/smoke packages/*/files/usr/bin/*
+	shellcheck -S warning scripts/*.sh docker/verify/check.sh packages/*/smoke packages/*/files/usr/bin/*
 	sh -n scripts/install.sh
 	docker run --rm -v "$(CURDIR):/repo" -w /repo rhysd/actionlint:1.7.12
 
