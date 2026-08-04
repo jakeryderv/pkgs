@@ -69,16 +69,23 @@ case " $ARCHES " in *" arm64 "*)
   CLIENTS+=(debian-arm64 ubuntu-arm64)
 esac
 
+UP_LOG="$(mktemp)"
 cleanup() {
   "${COMPOSE[@]}" down --remove-orphans >/dev/null 2>&1 || true
-  rm -rf "$DECOY" "$REPO/.wrong-keyring.gpg"
+  rm -rf "$DECOY" "$REPO/.wrong-keyring.gpg" "$UP_LOG"
 }
 trap cleanup EXIT
 
 echo "  architectures under test: $ARCHES"
 for arch in $ARCHES; do echo "  packages for $arch: $(pkgs_for "$arch")"; done
 
-"${COMPOSE[@]}" up -d --quiet-pull >/dev/null 2>&1
+# Quiet on success, but never silent on failure -- a swallowed compose error
+# reports as a bare exit 1 that says nothing about what broke.
+"${COMPOSE[@]}" up -d --quiet-pull >"$UP_LOG" 2>&1 || {
+  echo "ERROR: compose up failed:" >&2
+  cat "$UP_LOG" >&2
+  exit 1
+}
 
 # `docker wait` blocks until a container exits and prints its exit code.
 # Waiting serially costs nothing -- the clients are already running in
