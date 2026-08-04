@@ -98,7 +98,9 @@ Tag it upstream. That is the whole workflow — nothing here is edited by hand.
 
 `.github/workflows/autopin.yml` polls each declared repository daily. When a
 newer tag appears it takes the asset names from the release, re-pins the
-hashes, verifies build provenance, and opens a PR. Merging publishes.
+hashes, verifies build provenance, and opens a PR that auto-merges once
+`verify` passes. Merging publishes, so a green tag reaches the repository
+with no clicks here at all.
 
 Provenance is checked with `gh attestation verify`, which proves the artifact
 was built by that repository's own release workflow rather than uploaded by
@@ -110,15 +112,26 @@ cannot be picked up automatically, which is intended.
 Polling rather than a dispatch from the tool repo, deliberately.
 `repository_dispatch` requires `contents: write` on this repository — there is
 no dispatch-only permission — so every tool repo would hold a token able to
-push here, and pushing here publishes under the signing key. Polling needs no
-token in any tool repo at all, at the cost of a latency nothing here is
-sensitive to.
+push here, and pushing here publishes under the signing key. The daily
+schedule needs no token in any tool repo at all. A repo that wants
+same-minute pickup rather than next-morning can trigger the run itself with a
+fine-grained PAT scoped to **Actions: write** on this repository — enough to
+ask for a run, not enough to change what the run checks or pushes:
 
-One wrinkle: GitHub does not start checks on a PR opened by
-`github-actions[bot]` without approval, so each autopin PR needs *Approve and
-run* before `verify` reports. That is not a safety gate — `publish` requires
-`verify` on `main` regardless — so merging blind cannot publish something
-broken; it would just leave `main` red.
+```yaml
+- name: Ask pkgs to pick up this release
+  env:
+    GH_TOKEN: ${{ secrets.PKGS_AUTOPIN_DISPATCH }}
+  run: gh workflow run autopin.yml -R jakeryderv/pkgs
+```
+
+The workflow itself runs on `AUTOPIN_TOKEN`, a fine-grained PAT with contents
+and pull-requests write on this repository only, not the built-in
+`github.token`. Not a convenience: branches pushed with `github.token` never
+trigger `pull_request` workflows, so a PR opened that way waits forever on a
+required `verify` that never starts — and auto-merge waits with it. Closing
+an autopin PR without merging is still how a version is skipped; auto-merge
+only ever fires on a green `verify`.
 
 `fetch-releases.sh` prunes `vendor/` of anything no longer declared. Without
 that, retagging a package would leave its old `.deb` behind to be swept back
@@ -382,6 +395,8 @@ the container tests because it takes seconds and they take minutes.
 `publish` runs on `main` only and requires `GPG_PRIVATE_KEY`,
 `GPG_PASSPHRASE`, and `CLOUDFLARE_API_TOKEN`. It
 fails rather than publishing an unsigned repository if the key is missing.
+`autopin` additionally requires `AUTOPIN_TOKEN` — see "Releasing a fetched
+package" — and fails loudly without it.
 
 Nothing in the pipeline installs a CLI any more. R2 object operations live on
 the ordinary v4 API and take the same bearer token as everything else, so

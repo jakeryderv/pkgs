@@ -1,17 +1,21 @@
 name: autopin
 
 # Watch every package that declares a release, and open a PR when upstream has
-# tagged something newer than what is pinned here.
+# tagged something newer than what is pinned here. The PR auto-merges once
+# `verify` passes, so a tool repo's whole release workflow is tagging upstream.
 #
-# Pull rather than push, deliberately. A dispatch from each tool repo would be
-# faster, but repository_dispatch needs `contents: write` on this repository --
-# there is no dispatch-only permission -- so every tool repo would hold a token
-# that can push here, and pushing here publishes under our signing key. Polling
-# needs no token in any tool repo at all.
+# Pull rather than push, deliberately. repository_dispatch needs `contents:
+# write` on this repository -- there is no dispatch-only permission -- so every
+# tool repo would hold a token that can push here, and pushing here publishes
+# under our signing key. The daily schedule needs no token in any tool repo at
+# all; one that wants same-minute pickup can trigger `workflow_dispatch` with a
+# fine-grained PAT scoped to Actions: write -- enough to ask for a run, not
+# enough to change what the run checks.
 #
-# The PR is the review moment, not a safety gate: `verify` already runs before
-# `publish` either way. What it buys is a diff showing exactly which bytes
-# changed and when each version entered the repository.
+# The PR is not a review moment any more, but it is still the audit trail: a
+# diff showing exactly which bytes changed and when each version entered the
+# repository, and closing one without merging skips that version for good.
+# `verify` gates the merge, and `publish` requires `verify` regardless.
 
 on:
   schedule:
@@ -25,21 +29,38 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
 
+# Read-only for github.token: the real work runs on AUTOPIN_TOKEN, a
+# fine-grained PAT (contents + pull requests, this repository only). Not a
+# convenience -- branches pushed with github.token never trigger pull_request
+# workflows, so a PR opened that way waits forever on a required `verify` that
+# never starts, and auto-merge waits with it.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   autopin:
     runs-on: ubuntu-latest
     steps:
+      # Before checkout on purpose: an empty token would fail there anyway,
+      # just with a worse error.
+      - name: Require AUTOPIN_TOKEN
+        env:
+          GH_TOKEN: ${{ secrets.AUTOPIN_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::AUTOPIN_TOKEN is not set — PRs pushed with github.token never start verify, so they could never merge"
+            exit 1
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          token: ${{ secrets.AUTOPIN_TOKEN }}
       - name: Install packaging tools
         run: sudo apt-get update && sudo apt-get install -y dpkg-dev
 
       - name: Check for newer releases and open PRs
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.AUTOPIN_TOKEN }}
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
@@ -127,7 +148,7 @@ jobs:
               "" \
               "Asset names were taken from the release, hashes re-pinned with \`fetch-releases.sh --update $name\`, and build provenance verified with \`gh attestation verify\` against [$repo](https://github.com/$repo)." \
               "" \
-              "\`verify\` installs this in Debian and Ubuntu containers and runs the package's smoke test. Merging publishes it." \
+              "\`verify\` installs this in Debian and Ubuntu containers and runs the package's smoke test. This PR auto-merges when it passes, and merging publishes. Close the PR to skip this version instead." \
               > /tmp/pr-body.md
 
             # Force, because a previous run may have pushed this branch and
@@ -137,6 +158,10 @@ jobs:
             gh pr create --title "$name: $pinned -> $latest" \
                          --body-file /tmp/pr-body.md \
                          --head "$branch" --base main
+            # --auto waits for the branch protection gate (`verify`), then
+            # squashes. Closing the PR first cancels the merge and, per the
+            # guard above, skips this version permanently.
+            gh pr merge --auto --squash "$branch"
             opened=$((opened+1))
             git checkout -q main
           done
