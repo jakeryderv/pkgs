@@ -69,6 +69,17 @@ case " $ARCHES " in *" arm64 "*)
   CLIENTS+=(debian-arm64 ubuntu-arm64)
 esac
 
+# Docker's classic image store keys an image by name alone, so debian:stable
+# cannot hold amd64 and arm64 at once -- letting compose pull the matrix in
+# parallel races the two platforms on the same tag. Pull serially instead,
+# parking each platform under its own local tag for compose to use.
+for arch in $ARCHES; do
+  for img in debian:stable ubuntu:24.04; do
+    docker pull -q --platform "linux/$arch" "$img" >/dev/null
+    docker tag "$img" "pkgs-verify/${img%%:*}:$arch"
+  done
+done
+
 UP_LOG="$(mktemp)"
 cleanup() {
   "${COMPOSE[@]}" down --remove-orphans >/dev/null 2>&1 || true
