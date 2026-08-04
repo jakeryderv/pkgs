@@ -181,6 +181,19 @@ that reason.
 ./scripts/apply-cache-rules.sh  # cloudflare/cache-rules.json -> the zone
 ```
 
+Everything generated lands under `PKGS_OUT` — `~/.cache/pkgs-jvs` unless
+overridden — so a build never leaves artifacts in the working tree. `dist/`,
+`vendor/` and `repo/` throughout this document mean the directories under
+that root. The only tracked files a script ever writes are deliberate:
+`update-keyring.sh` regenerates the shipped keyring, and `build-repo.sh`
+rewrites the `install.sh` pin under `UPDATE_PINS=1` — both changes you review
+and commit.
+
+The `Makefile` is an index over the same scripts, not a second
+implementation: `make build`, `make repo`, `make verify`, `make lint`,
+`make publish`, `make sync`, `make cache-rules`, `make clean`. Scripts hold
+all behavior and run identically without it.
+
 The first two are independent and can run in either order. `build-deb.sh`
 never touches the network — a GitHub outage should not be able to break a
 build of packages that are entirely local — and `fetch-releases.sh` is

@@ -11,8 +11,9 @@
 # was an `npx` download of a large package on every publish.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPO="$ROOT/repo"
+# Shared output root -- see build-deb.sh for why this is outside the tree.
+OUT="${PKGS_OUT:-${XDG_CACHE_HOME:-$HOME/.cache}/pkgs-jvs}"
+REPO="$OUT/repo"
 BUCKET="${BUCKET:-pkgs}"
 API="https://api.cloudflare.com/client/v4"
 

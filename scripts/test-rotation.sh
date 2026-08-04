@@ -45,6 +45,11 @@ done
 mkdir -p "$WORK/gnupg"; chmod 700 "$WORK/gnupg"
 export GNUPGHOME="$WORK/gnupg"
 
+# The copied scripts write wherever PKGS_OUT points, and the caller's
+# environment may aim that at a real build. Pin it inside WORK so the
+# throwaway-key repo built here can never clobber one built to publish.
+export PKGS_OUT="$WORK"
+
 # Test keys. Deliberately not the real one.
 for k in a b; do
   gpg --batch --quiet --generate-key /dev/stdin <<EOF

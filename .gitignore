@@ -1,3 +1,6 @@
+# Legacy output locations. Builds now land under PKGS_OUT (default
+# ~/.cache/pkgs-jvs), but an old checkout's leftovers must never become
+# committable, so these stay ignored.
 dist/
 build/
 repo/

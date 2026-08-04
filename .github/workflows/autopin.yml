@@ -127,9 +127,13 @@ jobs:
             # Provenance, checked before anything is proposed. The pin proves
             # the bytes have not moved since we looked; this proves they were
             # built by that repository's own workflow.
+            #
+            # The path mirrors the scripts' shared PKGS_OUT default -- fetched
+            # assets no longer land in the working tree.
+            out="${PKGS_OUT:-${XDG_CACHE_HOME:-$HOME/.cache}/pkgs-jvs}"
             for asset in $assets; do
               echo "    verifying provenance of $asset"
-              gh attestation verify "vendor/$asset" --repo "$repo"
+              gh attestation verify "$out/vendor/$asset" --repo "$repo"
             done
 
             if git diff --quiet -- "$rel"; then

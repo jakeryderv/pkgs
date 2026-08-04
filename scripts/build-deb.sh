@@ -16,8 +16,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DIST="$ROOT/dist"
-BUILD="$ROOT/build"
+# Generated output lands under PKGS_OUT, outside the working tree, so a build
+# never litters the repository. Every script that generates anything shares
+# this default; test-rotation.sh overrides it to keep its throwaway-key build
+# away from the real one.
+OUT="${PKGS_OUT:-${XDG_CACHE_HOME:-$HOME/.cache}/pkgs-jvs}"
+DIST="$OUT/dist"
+BUILD="$OUT/build"
 
 # dist/ is a staging area for this build, not an archive. Letting it
 # accumulate means a stale .deb from an earlier version gets swept back into
@@ -37,7 +42,7 @@ for def in "$ROOT"/packages/*/; do
       echo "ERROR $name: has both a manifest and a release; it must be one or the other" >&2
       exit 1
     }
-    echo "  fetch  $name (see vendor/)"
+    echo "  fetch  $name (fetch-releases.sh provides it)"
     fetched=$((fetched+1))
     continue
   fi
@@ -101,7 +106,7 @@ done
 # error when there was nothing to do at all.
 [ "$found" -gt 0 ] || [ "$fetched" -gt 0 ] || { echo "ERROR: no packages found" >&2; exit 1; }
 if [ "$fetched" -gt 0 ]; then
-  echo "$found package(s) in $DIST; $fetched fetched into vendor/ instead"
+  echo "$found package(s) in $DIST; $fetched fetched into $OUT/vendor instead"
 else
   echo "$found package(s) in $DIST"
 fi
