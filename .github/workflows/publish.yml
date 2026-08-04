@@ -136,7 +136,6 @@ jobs:
       - name: Publish to R2
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          WRANGLER: npx --yes wrangler@4
         run: ./scripts/publish.sh
 
       # Publishing successfully is not the same as being installable: a
