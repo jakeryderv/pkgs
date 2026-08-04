@@ -3,6 +3,7 @@ build/
 repo/
 vendor/
 gnupg/
+.cloudflare/
 
 # 1Password Environments mounts this as a FIFO, which git will not track.
 # Listed anyway: if the mount is absent and something writes a real file at
