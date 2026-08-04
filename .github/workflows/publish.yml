@@ -29,6 +29,7 @@ jobs:
         run: |
           shellcheck -S warning \
             scripts/*.sh \
+            docker/verify/check.sh \
             packages/*/smoke \
             packages/*/files/usr/bin/*
           # install.sh ships to users, and a syntax error there is a broken
