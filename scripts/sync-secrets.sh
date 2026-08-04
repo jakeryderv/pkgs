@@ -109,11 +109,24 @@ echo "  passphrase unlocks the key"
 # GitHub, so it may simply not be in the vault yet -- in which case leave the
 # existing GitHub secret alone rather than overwriting a working one with
 # nothing.
+# The environment first, then the vault. 1Password Environments hold
+# environment variables and cannot be read by `op read`, so a token that lives
+# there is only reachable once the mounted .env is sourced. Preferring it means
+# the token is stored once rather than duplicated into the vault to satisfy
+# this script.
+CF_TOKEN_SRC=""
+if [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
+  CF_TOKEN_SRC="env"
+elif [ "$(ref_len "$OP_CF_TOKEN_REF")" -gt 0 ]; then
+  CF_TOKEN_SRC="vault"
+fi
+
 CF=0
-if [ "$(ref_len "$OP_CF_TOKEN_REF")" -gt 0 ]; then
+if [ -n "$CF_TOKEN_SRC" ]; then
   CF=1
+  echo "  cloudflare token from the $CF_TOKEN_SRC"
 else
-  echo "  cloudflare token not in the vault, leaving its GitHub secret untouched"
+  echo "  no cloudflare token found, leaving its GitHub secret untouched"
 fi
 
 if [ "$CF" -eq 1 ]; then
@@ -123,36 +136,44 @@ if [ "$CF" -eq 1 ]; then
   # No -f, deliberately. Cloudflare answers a bad token with HTTP 400 and a
   # JSON body explaining why; -f discards the body and exits 22, which under
   # pipefail aborts with a curl exit code instead of the actual reason.
+  cf_token() {
+    if [ "$CF_TOKEN_SRC" = "env" ]; then printf '%s' "$CLOUDFLARE_API_TOKEN"
+    else op read "$OP_CF_TOKEN_REF" 2>/dev/null; fi
+  }
   cf_api() { # path
-    curl -sS -K <(printf 'header = "Authorization: Bearer %s"\n' "$(op read "$OP_CF_TOKEN_REF" 2>/dev/null)") \
+    curl -sS -K <(printf 'header = "Authorization: Bearer %s"\n' "$(cf_token)") \
       "https://api.cloudflare.com/client/v4/$1"
   }
   cf_errors() { jq -r '(.errors // []) | map(.message) | join("; ")'; }
 
-  verify="$(cf_api user/tokens/verify)"
+  # Account id first: an account-owned token can only ever see one account, so
+  # it can be asked rather than stored. This also has to come first because the
+  # verify endpoint below is account-scoped.
+  accounts="$(cf_api accounts)"
+  if [ "$(printf '%s' "$accounts" | jq -r '.success')" != "true" ]; then
+    echo "ERROR: the Cloudflare token from the $CF_TOKEN_SRC was rejected." >&2
+    echo "  cloudflare says: $(printf '%s' "$accounts" | cf_errors)" >&2
+    exit 1
+  fi
+  CF_ACCOUNT="$(printf '%s' "$accounts" | jq -r '.result[0].id // empty')"
+  [ -n "$CF_ACCOUNT" ] || { echo "ERROR: the token belongs to no account" >&2; exit 1; }
+
+  # Account-scoped verify, NOT /user/tokens/verify. The latter answers "Invalid
+  # API Token" for a perfectly good account-owned token, because such a token
+  # is tied to the account rather than to a user and cannot call user endpoints.
+  verify="$(cf_api "accounts/$CF_ACCOUNT/tokens/verify")"
   if [ "$(printf '%s' "$verify" | jq -r '.success')" != "true" ]; then
-    echo "ERROR: the Cloudflare token at $OP_CF_TOKEN_REF was rejected." >&2
+    echo "ERROR: the Cloudflare token from the $CF_TOKEN_SRC did not verify." >&2
     echo "  cloudflare says: $(printf '%s' "$verify" | cf_errors)" >&2
     exit 1
   fi
   status="$(printf '%s' "$verify" | jq -r '.result.status // "unknown"')"
   [ "$status" = "active" ] || {
     echo "ERROR: the Cloudflare token is '$status', not active" >&2; exit 1; }
-  echo "  cloudflare token is active"
+  echo "  cloudflare token is active (account $CF_ACCOUNT)"
 
-  # An account-owned token can see exactly one account, so the id needs no
-  # separate storage -- ask the token which account it belongs to, then confirm
-  # the bucket is there. That covers R2 scope and bucket existence at once; a
-  # token that verifies but cannot see the bucket fails every publish while
-  # looking healthy.
-  accounts="$(cf_api accounts)"
-  CF_ACCOUNT="$(printf '%s' "$accounts" | jq -r '.result[0].id // empty')"
-  if [ -z "$CF_ACCOUNT" ]; then
-    echo "ERROR: the token cannot list its own account." >&2
-    echo "  cloudflare says: $(printf '%s' "$accounts" | cf_errors)" >&2
-    exit 1
-  fi
-
+  # A token that verifies but cannot see the bucket fails every publish while
+  # looking healthy, so check the thing publish.sh actually depends on.
   buckets="$(cf_api "accounts/$CF_ACCOUNT/r2/buckets")"
   if [ "$(printf '%s' "$buckets" | jq -r '.success')" != "true" ]; then
     echo "ERROR: could not list R2 buckets for account $CF_ACCOUNT" >&2
@@ -179,7 +200,7 @@ echo "  pushing to $REPO"
 op read "$OP_KEY_REF"  2>/dev/null | gh secret set GPG_PRIVATE_KEY --repo "$REPO"
 op read "$OP_PASS_REF" 2>/dev/null | gh secret set GPG_PASSPHRASE  --repo "$REPO"
 if [ "$CF" -eq 1 ]; then
-  op read "$OP_CF_TOKEN_REF" 2>/dev/null | gh secret set CLOUDFLARE_API_TOKEN --repo "$REPO"
+  cf_token | gh secret set CLOUDFLARE_API_TOKEN --repo "$REPO"
 fi
 
 # CI signs with vars.SIGNER_UID, defaulting to pkgs@jvs.sh. During a rotation
