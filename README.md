@@ -377,7 +377,7 @@ than shellcheck's, for the one file that ships to users. The tree is clean at
 the container tests because it takes seconds and they take minutes.
 
 `publish` runs on `main` only and requires `GPG_PRIVATE_KEY`,
-`GPG_PASSPHRASE`, `CLOUDFLARE_API_TOKEN`, and `CLOUDFLARE_ACCOUNT_ID`. It
+`GPG_PASSPHRASE`, and `CLOUDFLARE_API_TOKEN`. It
 fails rather than publishing an unsigned repository if the key is missing.
 
 `GPG_PASSPHRASE` is not optional: a runner has no gpg-agent and no tty, so
@@ -388,11 +388,11 @@ The Cloudflare token here should be scoped to **Workers R2 Storage → Edit
 and nothing else** — CI only uploads objects. It never needs zone access.
 Cache-rule work uses a separate token; see "Cache rules".
 
-`CLOUDFLARE_ACCOUNT_ID` is set as a secret for wrangler's benefit, but it is
-not one — an account id appears in dashboard URLs and is routinely committed
-in `wrangler.toml`. An account-owned token can only see one account anyway, so
-it is probably redundant entirely; worth dropping and confirming a publish
-still works.
+No account id is needed. An account-owned token can only ever see one
+account, so wrangler resolves it without being told — verified by deleting the
+secret and publishing successfully without it. It was never a secret anyway:
+an account id appears in dashboard URLs and is routinely committed in
+`wrangler.toml`.
 
 To publish: edit `packages/`, bump the version, push to `main`.
 
