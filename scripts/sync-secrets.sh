@@ -22,7 +22,6 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO="${REPO:-jakeryderv/pkgs}"
 OP_KEY_REF="${OP_KEY_REF:-op://dev/pkgs.jvs.sh/jvs-archive-signing-key.asc}"
 OP_PASS_REF="${OP_PASS_REF:-op://dev/pkgs.jvs.sh/password}"
-OP_CF_TOKEN_REF="${OP_CF_TOKEN_REF:-op://dev/pkgs.jvs.sh/cloudflare-token}"
 BUCKET="${BUCKET:-pkgs}"
 # Not a secret and not in the vault: an account id appears in dashboard URLs
 # and is routinely committed in wrangler.toml. It is only needed to check the
@@ -105,28 +104,21 @@ fi
 echo "  passphrase unlocks the key"
 
 # ---- Cloudflare -----------------------------------------------------------
-# Optional. A token is shown once at creation and cannot be read back out of
-# GitHub, so it may simply not be in the vault yet -- in which case leave the
-# existing GitHub secret alone rather than overwriting a working one with
-# nothing.
-# The environment first, then the vault. 1Password Environments hold
-# environment variables and cannot be read by `op read`, so a token that lives
-# there is only reachable once the mounted .env is sourced. Preferring it means
-# the token is stored once rather than duplicated into the vault to satisfy
-# this script.
-CF_TOKEN_SRC=""
-if [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
-  CF_TOKEN_SRC="env"
-elif [ "$(ref_len "$OP_CF_TOKEN_REF")" -gt 0 ]; then
-  CF_TOKEN_SRC="vault"
-fi
-
+# From the environment only. The Cloudflare tokens live in the `pkgs`
+# 1Password Environment, which holds environment variables and is not
+# reachable by `op read` -- so they arrive by sourcing the mounted .env and
+# there is nowhere else to look. There was a vault fallback here; it pointed
+# at a field that does not exist, which is worse than no fallback.
+#
+# Absent is not an error: a token is displayed once at creation and cannot be
+# read back out of GitHub, so leave the existing secret alone rather than
+# overwriting a working one with nothing.
 CF=0
-if [ -n "$CF_TOKEN_SRC" ]; then
+if [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
   CF=1
-  echo "  cloudflare token from the $CF_TOKEN_SRC"
 else
-  echo "  no cloudflare token found, leaving its GitHub secret untouched"
+  echo "  no CLOUDFLARE_API_TOKEN in the environment, leaving its GitHub secret alone"
+  echo "  (set -a; . ./.env; set +a  to load the pkgs Environment)"
 fi
 
 if [ "$CF" -eq 1 ]; then
@@ -136,12 +128,8 @@ if [ "$CF" -eq 1 ]; then
   # No -f, deliberately. Cloudflare answers a bad token with HTTP 400 and a
   # JSON body explaining why; -f discards the body and exits 22, which under
   # pipefail aborts with a curl exit code instead of the actual reason.
-  cf_token() {
-    if [ "$CF_TOKEN_SRC" = "env" ]; then printf '%s' "$CLOUDFLARE_API_TOKEN"
-    else op read "$OP_CF_TOKEN_REF" 2>/dev/null; fi
-  }
   cf_api() { # path
-    curl -sS -K <(printf 'header = "Authorization: Bearer %s"\n' "$(cf_token)") \
+    curl -sS -K <(printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN") \
       "https://api.cloudflare.com/client/v4/$1"
   }
   cf_errors() { jq -r '(.errors // []) | map(.message) | join("; ")'; }
@@ -151,7 +139,7 @@ if [ "$CF" -eq 1 ]; then
   # verify endpoint below is account-scoped.
   accounts="$(cf_api accounts)"
   if [ "$(printf '%s' "$accounts" | jq -r '.success')" != "true" ]; then
-    echo "ERROR: the Cloudflare token from the $CF_TOKEN_SRC was rejected." >&2
+    echo "ERROR: the Cloudflare token was rejected." >&2
     echo "  cloudflare says: $(printf '%s' "$accounts" | cf_errors)" >&2
     exit 1
   fi
@@ -163,7 +151,7 @@ if [ "$CF" -eq 1 ]; then
   # is tied to the account rather than to a user and cannot call user endpoints.
   verify="$(cf_api "accounts/$CF_ACCOUNT/tokens/verify")"
   if [ "$(printf '%s' "$verify" | jq -r '.success')" != "true" ]; then
-    echo "ERROR: the Cloudflare token from the $CF_TOKEN_SRC did not verify." >&2
+    echo "ERROR: the Cloudflare token did not verify." >&2
     echo "  cloudflare says: $(printf '%s' "$verify" | cf_errors)" >&2
     exit 1
   fi
@@ -200,7 +188,7 @@ echo "  pushing to $REPO"
 op read "$OP_KEY_REF"  2>/dev/null | gh secret set GPG_PRIVATE_KEY --repo "$REPO"
 op read "$OP_PASS_REF" 2>/dev/null | gh secret set GPG_PASSPHRASE  --repo "$REPO"
 if [ "$CF" -eq 1 ]; then
-  cf_token | gh secret set CLOUDFLARE_API_TOKEN --repo "$REPO"
+  printf '%s' "$CLOUDFLARE_API_TOKEN" | gh secret set CLOUDFLARE_API_TOKEN --repo "$REPO"
 fi
 
 # The read-only cache token, used only by the monitor workflow's drift check.
