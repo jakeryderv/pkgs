@@ -348,11 +348,14 @@ is safe anywhere. It compares only the fields we author — the API adds `id`,
 diff against a file that cannot know them — and preserves order, since rule
 order is evaluation order.
 
-It uses the `cf` CLI, whose `rulesets` commands cover the zone phase directly,
-with a token read from 1Password so no long-lived Cloudflare credential sits
-on disk. That token needs **Zone → Cache Rules → Edit** and nothing more; it
-is deliberately not the token CI publishes with, which never needs zone
-access.
+It talks to the API with `curl` — three requests, for which a CLI bought
+nothing while costing a dependency to install and pin. The token is read from
+1Password so no long-lived Cloudflare credential sits on disk. It needs **Zone
+→ Cache Settings → Edit**, or just **Read** to report drift, and is
+deliberately not the token CI publishes with, which never needs zone access.
+
+The daily drift check in `monitor.yml` uses a read-only token: CI reports
+divergence, fixing it stays a deliberate local act.
 
 The rules themselves:
 
