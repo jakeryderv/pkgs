@@ -192,7 +192,7 @@ fi
 if [ "$DRY" -eq 1 ]; then
   echo
   echo "dry run: nothing pushed."
-  echo "  would set: GPG_PRIVATE_KEY, GPG_PASSPHRASE$( [ "$CF" -eq 1 ] && printf ', CLOUDFLARE_API_TOKEN' )"
+  echo "  would set: GPG_PRIVATE_KEY, GPG_PASSPHRASE$( [ "$CF" -eq 1 ] && printf ', CLOUDFLARE_API_TOKEN' )$( [ -n "${CLOUDFLARE_CACHE_RO_TOKEN:-}" ] && printf ', CLOUDFLARE_CACHE_RO_TOKEN' )"
   exit 0
 fi
 
@@ -201,6 +201,14 @@ op read "$OP_KEY_REF"  2>/dev/null | gh secret set GPG_PRIVATE_KEY --repo "$REPO
 op read "$OP_PASS_REF" 2>/dev/null | gh secret set GPG_PASSPHRASE  --repo "$REPO"
 if [ "$CF" -eq 1 ]; then
   cf_token | gh secret set CLOUDFLARE_API_TOKEN --repo "$REPO"
+fi
+
+# The read-only cache token, used only by the monitor workflow's drift check.
+# Separate from the one above on purpose: that one can write to R2, this one
+# cannot write anything at all, and CI never needs to change cache rules.
+if [ -n "${CLOUDFLARE_CACHE_RO_TOKEN:-}" ]; then
+  printf '%s' "$CLOUDFLARE_CACHE_RO_TOKEN" | gh secret set CLOUDFLARE_CACHE_RO_TOKEN --repo "$REPO"
+  echo "  CLOUDFLARE_CACHE_RO_TOKEN pushed"
 fi
 
 # CI signs with vars.SIGNER_UID, defaulting to pkgs@jvs.sh. During a rotation
