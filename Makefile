@@ -10,7 +10,15 @@
 PKGS_OUT ?= $(if $(XDG_CACHE_HOME),$(XDG_CACHE_HOME),$(HOME)/.cache)/pkgs-jvs
 export PKGS_OUT
 
-.PHONY: build repo verify test-repo test-rotation lint publish sync cache-rules clean toolchain
+# A bare `make` lists the targets rather than running one. Make's default is
+# the first target in the file, which here would build a docker image --
+# nothing that touches the network or docker should happen by accident.
+.DEFAULT_GOAL := help
+
+.PHONY: help build repo verify test-repo test-rotation lint publish sync cache-rules clean toolchain
+
+help:
+	@grep -E '^## ' $(firstword $(MAKEFILE_LIST)) | sed 's/^## /  /'
 
 # ---- toolchain container ---------------------------------------------------
 # The build chain needs Debian's packaging tools, which a macOS or Windows
@@ -27,8 +35,11 @@ export PKGS_OUT
 TOOLCHAIN_IMAGE ?= pkgs-toolchain
 NEED_CONTAIN := $(or $(PKGS_CONTAINED),$(shell command -v dpkg-deb >/dev/null 2>&1 || echo 1))
 
+# Not -q: when apt inside the build fails, its error is the diagnosis, and
+# quiet mode swallows it.
+## toolchain: build the packaging-toolchain image
 toolchain:
-	docker build -q -t $(TOOLCHAIN_IMAGE) docker/toolchain >/dev/null
+	docker build -t $(TOOLCHAIN_IMAGE) docker/toolchain
 
 ifeq ($(strip $(NEED_CONTAIN)),)
 ## build: local packages -> dist/, pinned release assets -> vendor/
@@ -78,5 +89,6 @@ sync:
 cache-rules:
 	./scripts/apply-cache-rules.sh
 
+## clean: delete everything under PKGS_OUT
 clean:
 	rm -rf "$(PKGS_OUT)"
