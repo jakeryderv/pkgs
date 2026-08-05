@@ -6,7 +6,8 @@
 #   ./scripts/sync-secrets.sh --dry-run    check only, change nothing
 #
 # Rotating the signing key changes it in two places: the repository being
-# signed, and the secrets CI signs with. The README procedure covers the first.
+# signed, and the secrets CI signs with. The docs/operations.md procedure
+# covers the first.
 # This is the second, and skipping it means the next push to main silently
 # re-signs with the old key -- not broken, since machines still trust it at
 # that point, but quietly back on the key you meant to retire.
@@ -83,7 +84,8 @@ if ! gpg --show-keys --with-colons "$SHIPPED_KEYRING" 2>/dev/null \
   echo "ERROR: $FPR is not in the keyring this repository ships." >&2
   echo "CI would sign with a key installed machines do not trust, and they" >&2
   echo "could not fetch the update that would fix it." >&2
-  echo "Ship a keyring trusting it first -- see 'Rotating the signing key'." >&2
+  echo "Ship a keyring trusting it first -- see 'Rotating the signing key'" >&2
+  echo "in docs/operations.md." >&2
   exit 1
 fi
 echo "  trusted  yes (present in the shipped keyring)"

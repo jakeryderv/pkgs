@@ -9,7 +9,8 @@
 # to be in the builder's keyring at the time.
 #
 # During a rotation you list BOTH keys here. See "Rotating the signing key"
-# in the README: machines must learn the new key before it starts signing.
+# in docs/operations.md: machines must learn the new key before it starts
+# signing.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
